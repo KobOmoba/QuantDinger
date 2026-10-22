@@ -163,9 +163,6 @@ def _valid_interval_mask(index: pd.DatetimeIndex, frequency: str, market: str) -
     valid: list[bool] = []
     for start, end in zip(index[:-1], index[1:]):
         delta = end - start
-        if delta == expected:
-            valid.append(True)
-            continue
         if frequency == "1mo":
             start_date = (
                 equity_bar_session_date(start, market)
@@ -179,6 +176,9 @@ def _valid_interval_mask(index: pd.DatetimeIndex, frequency: str, market: str) -
             )
             months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
             valid.append(months == 1 and pd.Timedelta(days=20) <= delta <= pd.Timedelta(days=40))
+            continue
+        if delta == expected:
+            valid.append(True)
             continue
         if str(market or "").strip() in {"Crypto", "Cryptocurrency"}:
             valid.append(False)

@@ -210,6 +210,52 @@ def test_metric_rejects_missing_monthly_periods_across_gap():
     assert result["observations"] == 1
 
 
+def test_metric_rejects_missing_month_when_gap_is_exactly_thirty_days():
+    portfolio = [
+        {"time": "2026-01-31T00:00:00Z", "value": 100.0},
+        {"time": "2026-03-02T00:00:00Z", "value": 101.0},
+    ]
+    benchmark = [
+        {"time": "2026-01-31T00:00:00Z", "value": 100.0},
+        {"time": "2026-03-02T00:00:00Z", "value": 100.5},
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="Crypto:BTC/USDT",
+        frequency="1mo",
+        annualization_factor=12.0,
+        market="Crypto",
+    )
+
+    assert result["status"] == "insufficient_history"
+    assert result["observations"] == 0
+
+
+def test_metric_rejects_same_month_when_gap_is_exactly_thirty_days():
+    portfolio = [
+        {"time": "2026-01-01T00:00:00Z", "value": 100.0},
+        {"time": "2026-01-31T00:00:00Z", "value": 101.0},
+    ]
+    benchmark = [
+        {"time": "2026-01-01T00:00:00Z", "value": 100.0},
+        {"time": "2026-01-31T00:00:00Z", "value": 100.5},
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="Crypto:BTC/USDT",
+        frequency="1mo",
+        annualization_factor=12.0,
+        market="Crypto",
+    )
+
+    assert result["status"] == "insufficient_history"
+    assert result["observations"] == 0
+
+
 def test_metric_normalizes_monthly_aliases():
     portfolio = [
         {"time": "2026-01-31T00:00:00Z", "value": 100.0},
