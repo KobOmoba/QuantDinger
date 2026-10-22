@@ -111,3 +111,168 @@ def test_information_ratio_preserves_negative_values_and_custom_bands():
 
     assert result["informationRatio"] < 0
     assert result["classification"] == "negative"
+
+
+def test_information_ratio_supports_monthly_frequency_and_annualization_factor():
+    times = [
+        "2026-01-31T00:00:00Z",
+        "2026-02-28T00:00:00Z",
+        "2026-03-31T00:00:00Z",
+        "2026-04-30T00:00:00Z",
+    ]
+    portfolio = [
+        {"time": time, "value": value}
+        for time, value in zip(times, [100.0, 102.0, 105.0, 103.0])
+    ]
+    benchmark = [
+        {"time": time, "value": value}
+        for time, value in zip(times, [100.0, 101.0, 102.0, 101.5])
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="Crypto:BTC/USDT",
+        frequency="1mo",
+        annualization_factor=12.0,
+        market="Crypto",
+    )
+
+    assert result["status"] == "available"
+    assert result["observations"] == 3
+    assert result["frequency"] == "1mo"
+    assert result["annualizationFactor"] == 12.0
+    assert result["portfolioReturnAnnualized"] == pytest.approx(0.1214565826)
+    assert result["benchmarkReturnAnnualized"] == pytest.approx(0.0599961172)
+    assert result["activeReturnAnnualized"] == pytest.approx(0.0614604653)
+    assert result["trackingErrorAnnualized"] == pytest.approx(0.0601036291)
+    assert result["informationRatio"] == pytest.approx(1.022574946)
+    assert result["classification"] == "exceptional"
+
+
+def test_metric_accepts_consecutive_equity_monthly_sessions():
+    times = [
+        "2026-01-30T21:00:00Z",
+        "2026-02-27T21:00:00Z",
+        "2026-03-31T20:00:00Z",
+    ]
+    portfolio = [
+        {"time": time, "value": value}
+        for time, value in zip(times, [100.0, 102.0, 105.0])
+    ]
+    benchmark = [
+        {"time": time, "value": value}
+        for time, value in zip(times, [100.0, 101.0, 103.0])
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="USStock:SPY",
+        frequency="monthly",
+        annualization_factor=12.0,
+        market="USStock",
+    )
+
+    assert result["status"] == "available"
+    assert result["observations"] == 2
+    assert result["frequency"] == "1mo"
+    assert result["annualizationFactor"] == 12.0
+    assert result["informationRatio"] is not None
+
+
+def test_metric_rejects_missing_monthly_periods_across_gap():
+    times = [
+        "2026-01-31T00:00:00Z",
+        "2026-02-28T00:00:00Z",
+        # March is missing
+        "2026-04-30T00:00:00Z",
+    ]
+    portfolio = [
+        {"time": time, "value": value}
+        for time, value in zip(times, [100.0, 102.0, 103.0])
+    ]
+    benchmark = [
+        {"time": time, "value": value}
+        for time, value in zip(times, [100.0, 101.0, 101.5])
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="Crypto:BTC/USDT",
+        frequency="1mo",
+        annualization_factor=12.0,
+        market="Crypto",
+    )
+
+    assert result["status"] == "insufficient_history"
+    assert result["observations"] == 1
+
+
+def test_metric_rejects_missing_month_when_gap_is_exactly_thirty_days():
+    portfolio = [
+        {"time": "2026-01-31T00:00:00Z", "value": 100.0},
+        {"time": "2026-03-02T00:00:00Z", "value": 101.0},
+    ]
+    benchmark = [
+        {"time": "2026-01-31T00:00:00Z", "value": 100.0},
+        {"time": "2026-03-02T00:00:00Z", "value": 100.5},
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="Crypto:BTC/USDT",
+        frequency="1mo",
+        annualization_factor=12.0,
+        market="Crypto",
+    )
+
+    assert result["status"] == "insufficient_history"
+    assert result["observations"] == 0
+
+
+def test_metric_rejects_same_month_when_gap_is_exactly_thirty_days():
+    portfolio = [
+        {"time": "2026-01-01T00:00:00Z", "value": 100.0},
+        {"time": "2026-01-31T00:00:00Z", "value": 101.0},
+    ]
+    benchmark = [
+        {"time": "2026-01-01T00:00:00Z", "value": 100.0},
+        {"time": "2026-01-31T00:00:00Z", "value": 100.5},
+    ]
+
+    result = calculate_information_ratio(
+        portfolio,
+        benchmark,
+        benchmark="Crypto:BTC/USDT",
+        frequency="1mo",
+        annualization_factor=12.0,
+        market="Crypto",
+    )
+
+    assert result["status"] == "insufficient_history"
+    assert result["observations"] == 0
+
+
+def test_metric_normalizes_monthly_aliases():
+    portfolio = [
+        {"time": "2026-01-31T00:00:00Z", "value": 100.0},
+        {"time": "2026-02-28T00:00:00Z", "value": 101.0},
+    ]
+    benchmark = [
+        {"time": "2026-01-31T00:00:00Z", "value": 100.0},
+        {"time": "2026-02-28T00:00:00Z", "value": 100.5},
+    ]
+
+    for alias in ("1mo", "1month", "monthly", "month"):
+        result = calculate_information_ratio(
+            portfolio,
+            benchmark,
+            benchmark="Crypto:BTC/USDT",
+            frequency=alias,
+            annualization_factor=12.0,
+            market="Crypto",
+        )
+        assert result["frequency"] == "1mo"
