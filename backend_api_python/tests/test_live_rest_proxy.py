@@ -7,6 +7,7 @@ sent exchange REST traffic directly, so deployments that rely on
 """
 
 import pytest
+from types import SimpleNamespace
 
 from app.services.live_trading import base as rest_base
 from app.services.live_trading.base import BaseRestClient
@@ -45,6 +46,11 @@ def _capture_request(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(rest_base.requests, "request", fake_request)
+    monkeypatch.setattr(
+        rest_base,
+        "get_exchange_http_session",
+        lambda: SimpleNamespace(request=fake_request),
+    )
     return calls
 
 
@@ -92,8 +98,7 @@ def test_funnel_is_single_entrypoint(monkeypatch):
     assert calls["proxies"] is not None
 
 
-def test_request_scoped_transport_reuses_connection_without_persisting_auth(monkeypatch):
-    from types import SimpleNamespace
+def test_shared_transport_reuses_connection_without_persisting_auth(monkeypatch):
     calls = _capture_request(monkeypatch)
     client = BaseRestClient("https://example.com")
     client._request_session = SimpleNamespace(request=rest_base.requests.request)
@@ -102,4 +107,4 @@ def test_request_scoped_transport_reuses_connection_without_persisting_auth(monk
     client._request("GET", "/public")
     assert calls["headers"] == {"Connection": "keep-alive"}
     BaseRestClient("https://example.com")._request("GET", "/public")
-    assert calls["headers"] == {"Connection": "close"}
+    assert calls["headers"] == {"Connection": "keep-alive"}

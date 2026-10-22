@@ -149,10 +149,10 @@ def test_all_exchange_request_attribution_is_built_in():
     assert captured["json_body"]["tag"] == profile.okx_broker_code
 
     assert clients["bitget_spot"]._headers(
-        "1", "sign", "/api/v2/spot/trade/place-order"
+        "1", "sign", "/api/v3/trade/place-order"
     )["X-CHANNEL-API-CODE"] == profile.bitget_channel_api_code
     assert clients["bitget_swap"]._headers(
-        "1", "sign", "/api/v2/mix/order/place-order"
+        "1", "sign", "/api/v3/trade/place-order"
     )["X-CHANNEL-API-CODE"] == profile.bitget_channel_api_code
     assert clients["bitget_reality"]._headers(
         "1", "sign", "/api/v3/trade/place-reality-order"

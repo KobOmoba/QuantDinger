@@ -89,19 +89,16 @@ def convert_usdt_to_base_qty(client, symbol: str, usdt_amount: float, market_typ
                     # Binance public ticker endpoint
                     base_url = getattr(client, "base_url", "")
                     if "binance" in base_url.lower():
-                        import requests
                         if isinstance(client, BinanceFuturesClient):
-                            ticker_url = f"{base_url}/fapi/v1/ticker/price"
+                            ticker_path = "/fapi/v1/ticker/price"
                         else:
-                            ticker_url = f"{base_url}/api/v3/ticker/price"
+                            ticker_path = "/api/v3/ticker/price"
                         from app.services.live_trading.symbols import to_binance_futures_symbol
                         # Binance spot and futures use the same symbol format
                         sym = to_binance_futures_symbol(symbol)
-                        resp = requests.get(ticker_url, params={"symbol": sym}, timeout=5)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            if isinstance(data, dict):
-                                current_price = float(data.get("price") or 0)
+                        status, data, _ = client._request("GET", ticker_path, params={"symbol": sym})
+                        if status == 200 and isinstance(data, dict):
+                            current_price = float(data.get("price") or 0)
                 except Exception:
                     pass
 
@@ -109,20 +106,17 @@ def convert_usdt_to_base_qty(client, symbol: str, usdt_amount: float, market_typ
             from app.services.live_trading.bybit import BybitClient
             if current_price <= 0 and isinstance(client, BybitClient):
                 try:
-                    import requests
                     from app.services.live_trading.symbols import to_bybit_symbol
 
-                    bu = (getattr(client, "base_url", "") or "").rstrip("/")
                     bsym = to_bybit_symbol(symbol).upper()
                     cat = "spot" if (market_type or "").strip().lower() == "spot" else "linear"
-                    if bu and bsym:
-                        tr = requests.get(
-                            f"{bu}/v5/market/tickers",
+                    if getattr(client, "base_url", "") and bsym:
+                        status, jd, _ = client._request(
+                            "GET",
+                            "/v5/market/tickers",
                             params={"category": cat, "symbol": bsym},
-                            timeout=8,
                         )
-                        if tr.status_code == 200:
-                            jd = tr.json() if tr.text else {}
+                        if status == 200:
                             lst = (((jd.get("result") or {}).get("list")) or []) if isinstance(jd, dict) else []
                             if lst and isinstance(lst[0], dict):
                                 t0 = lst[0]
@@ -136,13 +130,12 @@ def convert_usdt_to_base_qty(client, symbol: str, usdt_amount: float, market_typ
                                     or 0
                                 )
                         if current_price <= 0:
-                            obr = requests.get(
-                                f"{bu}/v5/market/orderbook",
+                            status, od, _ = client._request(
+                                "GET",
+                                "/v5/market/orderbook",
                                 params={"category": cat, "symbol": bsym, "limit": 25},
-                                timeout=8,
                             )
-                            if obr.status_code == 200:
-                                od = obr.json() if obr.text else {}
+                            if status == 200:
                                 res = (od.get("result") or {}) if isinstance(od, dict) else {}
                                 bids = res.get("b") or []
                                 asks = res.get("a") or []

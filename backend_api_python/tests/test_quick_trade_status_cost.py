@@ -1,5 +1,7 @@
 import pytest
 
+from app.services.live_trading.bitget import BitgetMixClient
+from app.services.pending_orders.order_quantities import exchange_executable_base_quantity
 from app.services.quick_trade.orders import normalize_order_status, quick_order_status
 from app.services.quick_trade.history import history_order_status
 from app.services.quick_trade.spot_cost import average_cost_from_fills
@@ -28,6 +30,29 @@ def test_gate_terminal_reason_is_not_assumed_filled(native, expected):
 def test_open_partial_and_missing_evidence_stay_partial():
     assert quick_order_status(requested_qty=1, filled_qty=.5, exchange_status="open") == "partially_filled"
     assert history_order_status({"status": "partially_filled", "raw_result": {}}) == "partially_filled"
+
+
+def test_bitget_step_rounded_market_fill_is_complete():
+    client = BitgetMixClient.__new__(BitgetMixClient)
+    client.get_contract = lambda **_kwargs: {
+        "sizePlace": "1",
+        "minTradeNum": "0.1",
+    }
+    executable = exchange_executable_base_quantity(
+        client,
+        exchange_id="bitget",
+        symbol="SOL/USDT",
+        market_type="swap",
+        requested=4.7671259,
+        exchange_config={"product_type": "USDT-FUTURES"},
+    )
+
+    assert executable == 4.7
+    assert quick_order_status(
+        requested_qty=executable,
+        filled_qty=4.7,
+        exchange_status="partially_filled",
+    ) == "filled"
 
 
 def fill(fid, side, amount, price, fee=0, fee_currency="BTC"):

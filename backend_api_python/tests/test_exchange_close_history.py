@@ -51,7 +51,7 @@ class _Bitget(BitgetMixClient):
         self.rows = rows
 
     def _signed_request(self, *_args, **_kwargs):
-        return {"data": {"fillList": self.rows}}
+        return {"data": {"list": self.rows, "cursor": ""}}
 
 
 class _Gate(GateUsdtFuturesClient):
@@ -148,8 +148,8 @@ def test_bitget_rejects_open_fills_and_parses_fee_detail():
     snap = _resolve(
         _Bitget(
             [
-                {"tradeId": "g0", "side": "sell", "tradeSide": "open", "size": "0.5", "price": "90", "cTime": TS1},
-                {"tradeId": "g1", "side": "sell", "tradeSide": "close", "size": "0.5", "price": "101", "feeDetail": [{"feeCoin": "USDT", "totalFee": "-0.03"}], "cTime": TS2},
+                {"execId": "g0", "side": "sell", "tradeSide": "open", "execQty": "0.5", "execPrice": "90", "createdTime": TS1},
+                {"execId": "g1", "side": "sell", "tradeSide": "close", "execQty": "0.5", "execPrice": "101", "feeDetail": [{"feeCoin": "USDT", "fee": "0.03"}], "createdTime": TS2},
             ]
         ),
         0.5,

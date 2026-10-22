@@ -51,8 +51,6 @@ STRATEGY_RUNTIME_SETTINGS = {
 TRADING_RUNTIME_SETTINGS = {
     'ORDER_MODE',
     'MAKER_WAIT_SEC',
-    'SPOT_CLOSE_SAFETY_RATIO',
-    'SPOT_OPEN_QUOTE_BUFFER',
     'ALLOW_LOCAL_DESKTOP_BROKERS',
     'ENABLE_PENDING_ORDER_WORKER',
     'DISABLE_RESTORE_RUNNING_STRATEGIES',
@@ -104,7 +102,6 @@ ADVANCED_KEYS = {
     'OPENAI_BASE_URL', 'DEEPSEEK_BASE_URL', 'GROK_BASE_URL', 'ATLASCLOUD_BASE_URL', 'MINIMAX_BASE_URL',
     # Trading internals
     'ORDER_MODE', 'MAKER_WAIT_SEC',
-    'SPOT_CLOSE_SAFETY_RATIO', 'SPOT_OPEN_QUOTE_BUFFER',
     'FINNHUB_API_KEY', 'FINNHUB_FREE_ONLY',
     'TRADING_ECONOMICS_CLIENT', 'TRADING_ECONOMICS_KEY',
     'COINGLASS_API_KEY', 'CRYPTOQUANT_API_KEY', 'TIINGO_API_KEY',
@@ -783,20 +780,6 @@ CONFIG_SCHEMA = {
                 'type': 'number',
                 'default': '10',
                 'description': 'Wait time for limit order fill before switching to market order'
-            },
-            {
-                'key': 'SPOT_CLOSE_SAFETY_RATIO',
-                'label': 'Spot Close Safety Ratio',
-                'type': 'number',
-                'default': '1.0',
-                'description': 'When closing spot long, sell qty is capped to (exchange free base × this ratio), then floored to lot step. Base-asset fees are already deducted from strategy inventory; lower only if a venue still rejects full closes (valid range 0.9–1.0).'
-            },
-            {
-                'key': 'SPOT_OPEN_QUOTE_BUFFER',
-                'label': 'Spot Open Quote Buffer',
-                'type': 'number',
-                'default': '0.995',
-                'description': 'Fraction of USDT/notional used on spot open (reserve headroom for buy fees). Example 0.995 uses 99.5% of allocated quote (valid range 0.9–1.0).'
             },
             {
                 'key': 'ALLOW_LOCAL_DESKTOP_BROKERS',

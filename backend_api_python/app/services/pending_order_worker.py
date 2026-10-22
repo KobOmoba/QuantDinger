@@ -75,12 +75,11 @@ from app.services.pending_orders.entry_position_guard import (
 from app.services.grid.exchange_orders import query_grid_order_fill
 from app.services.pending_order_position_sync import PendingOrderPositionSyncMixin
 from app.services.pending_orders.sent_order_recovery import (
-    is_final_fill, normalize_live_order_status,
-    tracked_fill_baseline,
-)
+    is_final_fill, is_final_reconciled_fill, normalize_live_order_status, reconciled_close_snapshot, tracked_fill_baseline)
 from app.services.pending_orders.live_sync_recovery import restore_live_sent_order_after_sync_error
 from app.services.pending_orders.order_quantities import (
     exchange_quantity_snapshot,
+    quick_trade_status_quantity,
     reconciled_queue_status,
 )
 from app.services.pending_orders.broker_support import (
@@ -96,14 +95,12 @@ from app.services.pending_orders.execution_contract import (
     validate_persisted_strategy_mode,
 )
 from app.services.live_trading.binance import BinanceFuturesClient
+from app.services.live_trading.execution_lock import serialized_live_dispatch
 from app.utils.db import get_db_connection
 from app.services.pending_order_loops import PendingOrderLoops
 from app.utils.logger import get_logger
 from app.utils.strategy_runtime_logs import append_strategy_log
-from app.services.strategy_lifecycle import (
-    auto_stop_live_strategy,
-    is_fatal_exchange_error,
-)
+from app.services.strategy_lifecycle import auto_stop_live_strategy, is_fatal_exchange_error
 
 # Lazy import IBKR to avoid ImportError if ib_insync not installed
 IBKRClient = None
@@ -115,6 +112,9 @@ AlpacaClient = None
 logger = get_logger(__name__)
 
 ALPACA_FILL_DELTA_EPSILON = 1e-8
+
+
+_serialized_live_dispatch = lambda func: serialized_live_dispatch(func, strategy_loader=lambda strategy_id: load_strategy_configs(strategy_id))
 
 
 class PendingOrderWorker(
@@ -316,9 +316,13 @@ class PendingOrderWorker(
                 metadata["native_protection_error"] = protection_error
                 metadata["protection_status"] = "failed"
 
-        requested_qty = max(0.0, float(metadata.get("requested_base_qty") or 0.0))
+        status_qty, quantity_changed = quick_trade_status_quantity(
+            client, row=row, metadata=metadata, market_type=market_type,
+            exchange_config=exchange_config,
+        )
+        metadata_changed = metadata_changed or quantity_changed
         status = quick_order_status(
-            requested_qty=requested_qty,
+            requested_qty=status_qty,
             filled_qty=cumulative_filled,
             exchange_status=str(enrich.get("status") or ""),
         )
@@ -1155,27 +1159,21 @@ class PendingOrderWorker(
             exchange_config=exchange_config if isinstance(exchange_config, dict) else {},
         )
 
+        queue_status, response_snapshot = reconciled_close_snapshot(
+            row=row, queue_status=queue_status, exchange_status=exchange_status,
+            aggregate_filled=aggregate_filled, aggregate_avg=aggregate_avg,
+            requested_qty=requested_qty, executable_qty=executable_qty,
+            cumulative_filled=cumulative_filled, cumulative_avg=cumulative_avg,
+            cumulative_fees=cumulative_fees,
+        )
+
         self._update_live_sent_order_snapshot(
             order_id=order_id,
             status=queue_status,
             exchange_status=exchange_status,
             filled=aggregate_filled,
             avg_price=aggregate_avg,
-            exchange_response_json=json.dumps(
-                {
-                    "status": exchange_status,
-                    "filled": aggregate_filled,
-                    "avg_price": aggregate_avg,
-                    "requested_qty": requested_qty,
-                    "executable_qty": executable_qty,
-                    "live_fill_sync": {
-                        "tracked_filled": cumulative_filled,
-                        "tracked_avg_price": cumulative_avg,
-                        "fees_by_ccy": cumulative_fees,
-                    },
-                },
-                ensure_ascii=False,
-            ),
+            exchange_response_json=json.dumps(response_snapshot, ensure_ascii=False),
             dispatch_note=(
                 "live_fee_sync:retry"
                 if queue_status == "filled" and not cumulative_fees and delta <= ALPACA_FILL_DELTA_EPSILON
@@ -1420,6 +1418,7 @@ class PendingOrderWorker(
     def _mark_processing(self, order_id: int) -> bool:
         return claim_pending_order(order_id)
 
+    @_serialized_live_dispatch
     def _dispatch_one(self, order_row: Dict[str, Any]) -> None:
         from app.services.strategy_runtime.cancellations import intercept_cancelled_dispatch
         if intercept_cancelled_dispatch(order_row):
@@ -2005,27 +2004,13 @@ class PendingOrderWorker(
         spot_quote_amt = 0.0
         spot_market_buy_uses_quote = False
         if market_type == "spot":
-            try:
-                from app.services.live_trading.spot_sizing import prepare_spot_live_order_sizes
+            from app.services.live_trading.spot_sizing import prepare_spot_live_order_sizes_safely
 
-                amount, spot_quote_amt, spot_market_buy_uses_quote = prepare_spot_live_order_sizes(
-                    client,
-                    symbol=str(symbol),
-                    side=side,
-                    reduce_only=reduce_only,
-                    base_qty=float(amount or 0.0),
-                    ref_price=ref_price,
-                )
-                phases["spot_prepare"] = {
-                    "base_qty": amount,
-                    "quote_amt": spot_quote_amt,
-                    "market_buy_uses_quote": spot_market_buy_uses_quote,
-                }
-            except Exception as e:
-                logger.warning(
-                    "Spot size prepare failed: pending_id=%s, err=%s", order_id, e
-                )
-                phases["spot_prepare_error"] = str(e)
+            amount, spot_quote_amt, spot_market_buy_uses_quote, spot_prepare = prepare_spot_live_order_sizes_safely(
+                client, symbol=str(symbol), side=side, reduce_only=reduce_only,
+                base_qty=float(amount or 0.0), ref_price=ref_price,
+            )
+            phases["spot_prepare" if "error" not in spot_prepare else "spot_prepare_error"] = spot_prepare
         if market_category == "Crypto":
             amount, phases["exchange_quantity_normalization"] = exchange_quantity_snapshot(
                 client, exchange_id=exchange_id, symbol=symbol, market_type=market_type,
@@ -2276,6 +2261,18 @@ class PendingOrderWorker(
                 limit_order_id = str(execution_result.exchange_order_id or "")
             elif execution_algo != "limit":
                 market_order_id = str(execution_result.exchange_order_id or "")
+
+            from app.services.live_trading.close_reconciliation import maybe_reconcile_strategy_market_close
+            close_outcome = maybe_reconcile_strategy_market_close(
+                enabled=reduce_only and execution_algo != "limit" and not use_limit_first,
+                context=locals(),
+                client_order_id=lambda attempt: make_client_order_id(exchange_id=exchange_id,
+                    strategy_id=strategy_id, order_id=order_id, phase=f"r{attempt}"),
+                apply_result=lambda result: apply_execution_result(fills, result), append_log=append_strategy_log)
+            if close_outcome:
+                close_reconciliation, retry_order_id, retry_client_id = close_outcome
+                phases["close_reconciliation"] = close_reconciliation.metadata()
+                market_order_id, market_client_oid = retry_order_id or market_order_id, retry_client_id or market_client_oid
         except LiveTradingError as e:
             logger.warning(f"live executor failed: pending_id={order_id}, strategy_id={strategy_id}, cfg={safe_cfg}, err={e}")
             friendly_error = self._friendly_order_error(
@@ -2398,6 +2395,9 @@ class PendingOrderWorker(
 
         # Persist queue result first (idempotency / observability).
         try:
+            final_filled = is_final_reconciled_fill(
+                amount, filled, avg_price, execution_result.status, phases,
+            )
             self._mark_sent(
                 order_id=order_id,
                 note="live_order_sent",
@@ -2407,7 +2407,7 @@ class PendingOrderWorker(
                 filled=filled,
                 avg_price=avg_price,
                 executed_at=executed_at if filled > 0 else None,
-                final_filled=is_final_fill(amount, filled, avg_price, execution_result.status),
+                final_filled=final_filled,
                 client_order_id=coid_for_recovery,
             )
             _console_print(f"[worker] order sent: strategy_id={strategy_id} pending_id={order_id} exchange={res.exchange_id} order_id={res.exchange_order_id} filled={filled} avg={avg_price}")

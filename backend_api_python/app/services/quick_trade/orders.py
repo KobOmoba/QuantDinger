@@ -35,6 +35,7 @@ def enrich_fill(
     market_type: str,
     max_wait_sec: float = 8.0,
     initial_order: Any = None,
+    include_fees: bool = True,
 ) -> Dict[str, Any]:
     """Best-effort post-place fill enrichment for a Quick Trade order."""
     out = {
@@ -74,7 +75,7 @@ def enrich_fill(
                     out["filled"] = abs(client.contracts_signed_to_base_qty(contract=to_gate_currency_pair(sym), contracts_signed=contracts)) if contracts else 0.0
                     out["avg_price"] = float(initial_order.get("fill_price") or 0)
                     out["status"] = normalize_order_status(native_status, initial_order)
-                    if out["filled"] > 0:
+                    if out["filled"] > 0 and include_fees:
                         fee, currency = client.get_futures_trades_for_order(order_id=oid, contract=to_gate_currency_pair(sym))
                         out["fee"], out["fee_ccy"] = abs(float(fee or 0)), currency
                         if currency:

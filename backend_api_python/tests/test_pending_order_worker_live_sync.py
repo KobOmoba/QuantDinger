@@ -441,6 +441,62 @@ def test_live_sent_sync_tracks_market_leg_without_overwriting_limit_fill(monkeyp
     assert snapshots[0]["status"] == "filled"
 
 
+def test_close_retry_leg_baseline_does_not_double_book_fill(monkeypatch):
+    row = _row(filled=4.76, avg_price=100.0)
+    row["signal_type"] = "close_short"
+    row["amount"] = 4.76
+    row["exchange_order_id"] = "retry-1"
+    row["exchange_response_json"] = json.dumps({"phases": {
+        "close_reconciliation": {
+            "status": "closed",
+            "target_quantity": 4.76,
+            "remaining_quantity": 0.0,
+            "retry_orders": [{
+                "exchange_order_id": "retry-1",
+                "filled_quantity": 1.9,
+                "avg_price": 100.0,
+            }],
+        }
+    }})
+    worker, snapshots, persisted = _worker(
+        monkeypatch,
+        row,
+        exchange_fill=(1.9, 100.0, "filled"),
+    )
+
+    worker._sync_one_live_sent_order(row)
+
+    assert len(persisted) == 1
+    assert persisted[0]["filled"] == 0
+    assert snapshots[0]["filled"] == pytest.approx(4.76)
+    assert snapshots[0]["status"] == "filled"
+
+
+def test_unresolved_close_reconciliation_cannot_be_promoted_by_child_status(monkeypatch):
+    row = _row(filled=2.86, avg_price=100.0)
+    row["signal_type"] = "close_short"
+    row["amount"] = 4.76
+    row["exchange_response_json"] = json.dumps({"phases": {
+        "close_reconciliation": {
+            "status": "partial",
+            "target_quantity": 4.76,
+            "remaining_quantity": 1.9,
+            "retry_orders": [],
+        }
+    }})
+    worker, snapshots, _persisted = _worker(
+        monkeypatch,
+        row,
+        exchange_fill=(2.86, 100.0, "filled"),
+    )
+
+    worker._sync_one_live_sent_order(row)
+
+    assert snapshots[0]["status"] == "sent"
+    response = json.loads(snapshots[0]["exchange_response_json"])
+    assert response["phases"]["close_reconciliation"]["status"] == "partial"
+
+
 def test_restart_after_market_poll_timeout_books_only_the_market_tail(monkeypatch):
     row = _row(filled=2.0, avg_price=100.0)
     row["amount"] = 3.0

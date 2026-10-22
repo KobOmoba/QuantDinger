@@ -30,23 +30,44 @@ def test_gate_ack_is_authoritative_without_another_order_poll(monkeypatch, statu
     assert result["fee"] == (.02 if left < 2 else 0)
 
 
-def test_quick_trade_transport_is_closed_on_error_and_not_shared(monkeypatch):
-    import requests
-    sessions = []
-    class Session:
-        closed = False
-        def __init__(self): sessions.append(self)
-        def close(self): self.closed = True
-    monkeypatch.setattr(requests, "Session", Session)
+def test_gate_ack_can_defer_fee_lookup_from_interactive_request(monkeypatch):
+    from app.services.quick_trade.orders import enrich_fill
+
+    client = object.__new__(GateUsdtFuturesClient)
+    monkeypatch.setattr(client, "contracts_signed_to_base_qty", lambda **kw: kw["contracts_signed"] * .1)
+    monkeypatch.setattr(client, "get_futures_trades_for_order", lambda **kw: pytest.fail("fee lookup must be deferred"))
+    ack = dict(id="123", status="finished", size=2, left=0, fill_price=100)
+
+    result = enrich_fill(
+        client,
+        order_id="123",
+        symbol="SOL/USDT",
+        market_type="swap",
+        initial_order=ack,
+        include_fees=False,
+    )
+
+    assert result["filled"] == .2
+    assert result["avg_price"] == 100
+    assert result["status"] == "filled"
+    assert result["fee_status"] == "pending"
+
+
+def test_quick_trade_transport_keeps_shared_pool_warm_on_error(monkeypatch):
+    from app.services.quick_trade import transport
+
+    session = SimpleNamespace()
+    releases = []
+    monkeypatch.setattr(transport, "get_exchange_http_session", lambda: session)
+    monkeypatch.setattr(transport, "release_exchange_http_session", lambda: releases.append(True))
     app = Flask(__name__)
     for _ in range(2):
         with app.test_request_context():
-            quick_trade.open_quick_trade_transport()
-            assert g.quick_trade_session is sessions[-1]
-            quick_trade.close_quick_trade_transport(RuntimeError("failed"))
+            transport.open_quick_trade_transport()
+            assert g.quick_trade_session is session
+            transport.close_quick_trade_transport(RuntimeError("failed"))
             assert not hasattr(g, "quick_trade_session")
-    assert sessions[0] is not sessions[1]
-    assert all(s.closed for s in sessions)
+    assert releases == [True, True]
 
 
 def test_exchange_history_preserves_round_trip_net_and_funding(monkeypatch):
@@ -237,6 +258,82 @@ def test_close_uses_fresh_full_size_reduce_only_and_bounded_enrichment(monkeypat
         assert calls["price"] == 110
     else:
         assert calls["signal_type"] == "close_long"
+
+
+def test_binance_full_market_close_reports_snapshot_residual_for_one_safe_retry(monkeypatch):
+    from app.services.live_trading import execution
+    from app.services.live_trading import fee_quote
+
+    snapshots = iter([
+        [{"symbol": "SOL/USDT", "size": -4.76, "side": "short", "entry_price": 104.89}],
+        [{"symbol": "SOL/USDT", "size": -1.9, "side": "short", "entry_price": 104.89}],
+    ])
+    calls = []
+    monkeypatch.setattr(quick_trade, "_build_product_aware_config", lambda *a, **k: ({"exchange_id": "binance"}, {}))
+    monkeypatch.setattr(quick_trade, "create_exchange_client", lambda *a, **k: object())
+    monkeypatch.setattr(quick_trade, "_fetch_exchange_positions_raw", lambda *a, **k: next(snapshots))
+    monkeypatch.setattr(quick_trade, "exchange_quantity_snapshot", lambda *a, **k: (k["requested"], {}))
+
+    def submit(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            exchange_order_id="close-1",
+            filled=2.86,
+            avg_price=105.3,
+            raw={"status": "FILLED", "executedQty": "2.86"},
+        )
+
+    monkeypatch.setattr(execution, "place_order_from_signal", submit)
+    monkeypatch.setattr(
+        quick_trade,
+        "enrich_fill",
+        lambda *a, **k: {
+            "filled": 2.86,
+            "avg_price": 105.3,
+            "fee": 0,
+            "fee_ccy": "USDT",
+            "fees_by_ccy": {"USDT": 0},
+            "fee_status": "actual_zero",
+            "status": "filled",
+        },
+    )
+    monkeypatch.setattr(fee_quote, "fee_to_quote", lambda *a, **k: 0)
+    stored = {}
+    monkeypatch.setattr(quick_trade, "_record_quick_trade", lambda **kw: stored.update(kw) or 1)
+
+    app = Flask(__name__)
+    with app.test_request_context():
+        g.user_id = 101
+        response = inspect.unwrap(quick_trade.close_position)({
+            "credential_id": 9,
+            "symbol": "SOL/USDT",
+            "market_type": "swap",
+            "position_side": "short",
+            "close_scope": "full",
+        })
+
+    data = response.json["data"]
+    assert calls[0]["amount"] == pytest.approx(4.76)
+    assert data["filled"] == pytest.approx(2.86)
+    assert data["remaining_size"] == pytest.approx(1.9)
+    assert data["retry_close_size"] == pytest.approx(1.9)
+    assert data["close_complete"] is False
+    assert data["status"] == "partially_filled"
+    assert stored["status"] == "partially_filled"
+
+
+def test_matching_position_size_ignores_other_symbols_and_sides():
+    positions = [
+        {"symbol": "SOL/USDT", "side": "short", "size": 1.2},
+        {"symbol": "SOLUSDT", "side": "short", "size": 0.7},
+        {"symbol": "SOL/USDT", "side": "long", "size": 4},
+        {"symbol": "BTC/USDT", "side": "short", "size": 8},
+    ]
+    assert quick_trade._matching_position_size(
+        positions,
+        symbol="SOL/USDT",
+        position_side="short",
+    ) == pytest.approx(1.9)
 
 
 def test_cancel_protection_cannot_cancel_another_symbol_or_side(monkeypatch):

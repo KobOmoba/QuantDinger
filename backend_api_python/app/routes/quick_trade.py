@@ -71,6 +71,17 @@ from app.services.quick_trade.sizing import (
 )
 from app.services.quick_trade.external_closes import sync_exchange_close_fills as _sync_exchange_close_fills
 from app.services.quick_trade.transport import close_quick_trade_transport, open_quick_trade_transport
+from app.services.quick_trade.order_safety import (
+    matching_position_size as _matching_position_size,
+    normalized_submission_quantity,
+    serialized_quick_trade_close,
+    verify_full_market_close,
+)
+from app.services.pending_orders.order_quantities import exchange_quantity_snapshot
+from app.services.quick_trade.spot_positions import (
+    enrich_spot_positions as _enrich_spot_positions_impl,
+    quick_trade_spot_avg_entry_price as _quick_trade_spot_avg_entry_price,
+)
 from app.utils.request_guard import RequestGuardError, cache_key, guarded_cached
 
 logger = get_logger(__name__)
@@ -424,6 +435,29 @@ def place_order(body):
             except Exception as pe:
                 logger.warning("swap margin pre-check skipped: %s", pe)
 
+        executable_base_qty, quantity_snapshot = normalized_submission_quantity(
+            client,
+            exchange_id=exchange_id,
+            symbol=symbol,
+            market_type=market_type,
+            requested=base_qty,
+            exchange_config=exchange_config,
+            source="quick_trade_submission",
+            snapshotter=exchange_quantity_snapshot,
+        )
+        status_base_qty = executable_base_qty
+        status_quantity_mode = (
+            "exchange_status"
+            if market_type == "spot"
+            and order_type == "market"
+            and side == "buy"
+            and quote_for_buy > 0
+            and not uses_base_quantity
+            else "base_quantity"
+        )
+        if status_quantity_mode == "exchange_status":
+            status_base_qty = 0.0
+
         timestamp_suffix = str(int(time.time()))[-6:]  # Last 6 digits of timestamp
         uuid_suffix = uuid.uuid4().hex[:8]  # 8 hex chars
         client_order_id = f"qt{timestamp_suffix}{uuid_suffix}"  # Total: 2 + 6 + 8 = 16 chars
@@ -462,11 +496,10 @@ def place_order(body):
         avg_fill = float(getattr(result, "avg_price", 0) or 0)
         raw = getattr(result, "raw", {}) or {}
 
-        # ---- best-effort post-place enrichment (fee + accurate filled/avg) ----
-        # ``place_market_order`` typically only returns the ACK, so the filled
-        # qty / avg price / commission have to be polled separately. Without
-        # this Quick Trade rows landed with ``commission=0`` and our P&L
-        # surfaces were optimistic. Mirrors the strategy worker's behaviour.
+        # ---- bounded fill enrichment ----
+        # Use terminal ACK details immediately when available. Fee reconciliation
+        # remains asynchronous so a secondary trade-history lookup never delays
+        # the order acknowledgement shown to the user.
         commission = 0.0
         commission_ccy = ""
         commission_quote = None
@@ -480,6 +513,7 @@ def place_order(body):
                 market_type=market_type,
                 max_wait_sec=0.25,
                 initial_order=raw,
+                include_fees=False,
             )
             if enrich.get("filled", 0.0) > 0:
                 filled = float(enrich["filled"])
@@ -534,13 +568,16 @@ def place_order(body):
         )
 
         status = quick_order_status(
-            requested_qty=base_qty,
+            requested_qty=status_base_qty,
             filled_qty=filled,
             exchange_status=exchange_status,
         )
         raw_record = dict(raw) if isinstance(raw, dict) else {"raw": raw}
         raw_record["_quick_trade"] = {
             "requested_base_qty": base_qty,
+            "executable_base_qty": executable_base_qty,
+            "status_quantity_mode": status_quantity_mode,
+            "quantity_snapshot": quantity_snapshot,
             "input_amount_usdt": usdt_amount,
             "notional_usdt": order_notional_usdt,
             "amount_semantics": "base_quantity" if uses_base_quantity else ("margin" if market_type == "swap" else "quote_notional"),
@@ -768,73 +805,6 @@ def get_balance():
         return jsonify({"code": 0, "msg": str(e)}), 500
 
 
-def _quick_trade_spot_avg_entry_price(
-    user_id: int,
-    credential_id: int,
-    symbol: str,
-    market_type: str,
-    expected_size: float = 0.0,
-) -> float:
-    """
-    Average cost basis from filled Quick Trade rows (chronological avg-cost).
-    """
-    sym = str(symbol or "").strip()
-    mt = (market_type or "spot").strip().lower()
-    with get_db_connection() as db:
-        cur = db.cursor()
-        cur.execute(
-            """
-            SELECT side, filled_amount, avg_fill_price, price, commission, commission_ccy
-            FROM qd_quick_trades
-            WHERE user_id = %s AND credential_id = %s AND symbol = %s AND market_type = %s
-              AND COALESCE(filled_amount, 0) > 0
-            ORDER BY created_at ASC, id ASC
-            """,
-            (int(user_id), int(credential_id), sym, mt),
-        )
-        rows = cur.fetchall() or []
-        cur.close()
-
-    qty = 0.0
-    cost = 0.0
-    from app.services.live_trading.symbols import _split_base_quote
-    from math import isclose
-    base, _ = _split_base_quote(sym)
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        side = str(row.get("side") or "").strip().lower()
-        try:
-            filled = float(row.get("filled_amount") or 0.0)
-        except (TypeError, ValueError):
-            filled = 0.0
-        try:
-            px = float(row.get("avg_fill_price") or 0.0)
-        except (TypeError, ValueError):
-            px = 0.0
-        if px <= 0:
-            try:
-                px = float(row.get("price") or 0.0)
-            except (TypeError, ValueError):
-                px = 0.0
-        if filled <= 0 or px <= 0:
-            continue
-        base_fee = float(row.get("commission") or 0) if str(row.get("commission_ccy") or "").upper() == base.upper() else 0.0
-        if side == "buy":
-            cost += filled * px
-            qty += filled - base_fee
-        elif side == "sell" and qty > 0:
-            sell_qty = min(filled + base_fee, qty)
-            avg = cost / qty
-            cost -= sell_qty * avg
-            qty -= sell_qty
-    if qty > 1e-12 and cost > 0:
-        if expected_size > 0 and not isclose(qty, expected_size, rel_tol=1e-6, abs_tol=1e-10):
-            return 0.0
-        return cost / qty
-    return 0.0
-
-
 def _enrich_spot_positions(
     positions: list,
     *,
@@ -843,58 +813,13 @@ def _enrich_spot_positions(
     user_id: int,
     credential_id: int,
     market_type: str,
+    exchange_id: str = "",
 ) -> list:
-    """Fill missing spot entry / mark / unrealized PnL for Quick Trade display."""
-    from app.services.live_trading.spot_sizing import fetch_spot_last_price
-    from app.services.quick_trade.spot_cost import exchange_spot_cost
-
-    if not positions:
-        return positions
-
-    db_avg = _quick_trade_spot_avg_entry_price(
-        user_id, credential_id, symbol, market_type,
-        expected_size=sum(float(pos.get("size") or 0) for pos in positions if isinstance(pos, dict)),
+    return _enrich_spot_positions_impl(
+        positions, client=client, symbol=symbol, user_id=user_id,
+        credential_id=credential_id, market_type=market_type,
+        exchange_id=exchange_id, average_cost_loader=_quick_trade_spot_avg_entry_price,
     )
-    last_px = fetch_spot_last_price(client, symbol=symbol)
-
-    enriched: list = []
-    for pos in positions:
-        if not isinstance(pos, dict):
-            continue
-        row = dict(pos)
-        entry = float(row.get("entry_price") or 0.0)
-        cost_source = "exchange" if entry > 0 else ""
-        if entry <= 0 and db_avg > 0:
-            entry = db_avg
-            cost_source = "quick_trade_estimate"
-        if entry <= 0:
-            try:
-                entry = exchange_spot_cost(client, symbol=symbol, holding=float(row.get("size") or 0))
-                if entry > 0:
-                    cost_source = "exchange_fills_estimate"
-            except Exception as exc:
-                logger.info("Spot cost unavailable for %s: %s", symbol, exc)
-        mark = float(row.get("mark_price") or 0.0)
-        if mark <= 0 and last_px > 0:
-            mark = last_px
-        size = float(row.get("size") or 0.0)
-        side = str(row.get("side") or "long").strip().lower()
-
-        row["entry_price"] = entry
-        row["cost_source"] = cost_source or "unavailable"
-        if mark > 0:
-            row["mark_price"] = mark
-
-        upl = float(row.get("unrealized_pnl") or 0.0)
-        if abs(upl) < 1e-12 and entry > 0 and mark > 0 and size > 0:
-            if side == "short":
-                upl = (entry - mark) * size
-            else:
-                upl = (mark - entry) * size
-            row["unrealized_pnl"] = upl
-
-        enriched.append(row)
-    return enriched
 
 
 def _fetch_spot_holdings_raw(client: Any, *, symbol: str) -> Dict[str, Any]:
@@ -917,8 +842,6 @@ def _fetch_spot_holdings_raw(client: Any, *, symbol: str) -> Dict[str, Any]:
     if total <= 0 and avail <= 0:
         return {"data": []}
     qty = total if total > 0 else avail
-    if avail <= 0:
-        avail = qty
     row: Dict[str, Any] = {
         "symbol": display,
         "bal": qty,
@@ -1148,6 +1071,7 @@ def get_position():
                         user_id=user_id,
                         credential_id=credential_id,
                         market_type=market_type,
+                        exchange_id=exchange_id_pos,
                     )
             except Exception as pe:
                 logger.warning(f"Position fetch failed: {pe}")
@@ -1241,6 +1165,7 @@ def _quick_trade_net_base_qty(
 @quick_trade_blp.route('/close-position', methods=['POST'])
 @login_required
 @quick_trade_blp.arguments(QuickTradeCloseRequestSchema, location="json")
+@serialized_quick_trade_close
 def close_position(body):
     """
     Close an existing position.
@@ -1408,6 +1333,17 @@ def close_position(body):
                     spot_meta,
                 )
             actual_close_size = adjusted
+
+        status_close_size, close_quantity_snapshot = normalized_submission_quantity(
+            client,
+            exchange_id=exchange_id,
+            symbol=symbol,
+            market_type=market_type,
+            requested=actual_close_size,
+            exchange_config=exchange_config,
+            source="quick_trade_close_submission",
+            snapshotter=exchange_quantity_snapshot,
+        )
         
         # ---- determine signal type based on position side ----
         if market_type == "spot":
@@ -1473,6 +1409,7 @@ def close_position(body):
                 market_type=market_type,
                 max_wait_sec=0.25,
                 initial_order=raw,
+                include_fees=False,
             )
             if enrich.get("filled", 0.0) > 0:
                 filled = float(enrich["filled"])
@@ -1497,13 +1434,61 @@ def close_position(body):
                 )
 
         status = quick_order_status(
-            requested_qty=actual_close_size,
+            requested_qty=status_close_size,
             filled_qty=filled,
             exchange_status=exchange_status,
         )
+
+        remaining_size: Optional[float] = None
+        close_complete: Optional[bool] = None
+        retry_close_size = 0.0
+        if (
+            order_type == "market"
+            and close_scope == "full"
+        ):
+            try:
+                verification = verify_full_market_close(
+                    client=client,
+                    exchange_config=exchange_config,
+                    symbol=symbol,
+                    market_type=market_type,
+                    position_side=position_side,
+                    requested=actual_close_size,
+                    filled=filled,
+                    status=status,
+                    fetch_positions=_fetch_exchange_positions_raw,
+                    parse_positions=_parse_positions,
+                )
+                remaining_size = verification["remaining_size"]
+                close_complete = verification["close_complete"]
+                retry_close_size = verification["retry_close_size"]
+                status = verification["status"]
+                logger.info(
+                    "quick_trade close verification: exchange=%s market=%s symbol=%s side=%s requested=%s filled=%s remaining=%s retry=%s complete=%s",
+                    exchange_id,
+                    market_type,
+                    symbol,
+                    position_side,
+                    actual_close_size,
+                    filled,
+                    remaining_size,
+                    retry_close_size,
+                    close_complete,
+                )
+            except Exception as verify_error:
+                logger.warning(
+                    "quick_trade close verification failed: exchange=%s market=%s symbol=%s side=%s error=%s",
+                    exchange_id,
+                    market_type,
+                    symbol,
+                    position_side,
+                    verify_error,
+                )
         raw_record = dict(raw) if isinstance(raw, dict) else {"raw": raw}
         raw_record["_quick_trade"] = {
             "requested_base_qty": actual_close_size,
+            "executable_base_qty": status_close_size,
+            "quantity_snapshot": close_quantity_snapshot,
             "exchange_status": exchange_status,
             "is_close": True,
             "close_side": position_side,
@@ -1514,6 +1499,9 @@ def close_position(body):
             "api_family": str((resolved_product or {}).get("api_family") or ""),
             "fees_by_ccy": dict(enrich.get("fees_by_ccy") or {}),
             "fee_status": str(enrich.get("fee_status") or "pending"),
+            "remaining_size": remaining_size,
+            "close_complete": close_complete,
+            "retry_close_size": retry_close_size,
         }
 
         # ---- calculate USDT amount for recording ----
@@ -1567,6 +1555,9 @@ def close_position(body):
                 "close_scope": close_scope,
                 "tracked_net_base": tracked_net if close_scope == "system_tracked" else None,
                 "status": status,
+                "remaining_size": remaining_size,
+                "close_complete": close_complete,
+                "retry_close_size": retry_close_size,
             },
         })
         

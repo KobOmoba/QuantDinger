@@ -22,6 +22,7 @@ from app.services.live_trading.base import (
     LiveTradingError,
     cancel_all_algo_orders_enabled,
 )
+from app.services.live_trading.ws_order_transport import submit_okx_order
 from app.utils.numeric_precision import floor_decimal_to_step, format_decimal
 
 logger = logging.getLogger(__name__)
@@ -304,6 +305,21 @@ class OkxClient(BaseRestClient):
 
         For GET requests with params, the query string must be part of request_path in the prehash.
         """
+        if (
+            str(method or "").upper() == "POST"
+            and path == "/api/v5/trade/order"
+            and isinstance(json_body, dict)
+        ):
+            ws_result = submit_okx_order(
+                api_key=self.api_key,
+                secret_key=self.secret_key,
+                passphrase=self.passphrase,
+                body=json_body,
+                simulated=self.simulated_trading,
+            )
+            if ws_result is not None:
+                return ws_result
+
         ts = self._iso_ts()
         body_str = self._json_dumps(json_body) if json_body is not None else ""
 
@@ -829,7 +845,29 @@ class OkxClient(BaseRestClient):
         if self.broker_code:
             body["tag"] = str(self.broker_code)
 
-        raw = self._signed_request("POST", "/api/v5/trade/order", json_body=body)
+        try:
+            raw = self._signed_request("POST", "/api/v5/trade/order", json_body=body)
+        except LiveTradingError as exc:
+            if mt == "spot" or not reduce_only or "51169" not in str(exc):
+                raise
+            self._acct_cfg_cache.pop("account_config", None)
+            refreshed_ps = self._resolve_pos_side(
+                requested_pos_side=pos_side,
+                market_type=mt,
+            )
+            if refreshed_ps == body.get("posSide"):
+                raise
+            body["posSide"] = refreshed_ps
+            if refreshed_ps == "net":
+                body["reduceOnly"] = "true"
+            else:
+                body.pop("reduceOnly", None)
+            logger.info(
+                "Retrying OKX reduce-only market order after position mode refresh: %s %s",
+                inst_id,
+                refreshed_ps,
+            )
+            raw = self._signed_request("POST", "/api/v5/trade/order", json_body=body)
         data = (raw.get("data") or []) if isinstance(raw, dict) else []
         first: Dict[str, Any] = data[0] if isinstance(data, list) and data else {}
         exchange_order_id = str(first.get("ordId") or first.get("clOrdId") or "")

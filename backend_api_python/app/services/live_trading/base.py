@@ -14,9 +14,11 @@ import os
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
+from urllib.parse import urlsplit
 
 import requests
 
+from app.services.live_trading.http_transport import get_exchange_http_session
 from app.utils.resource_guard import (
     ResourceExhaustedError,
     assert_fd_available,
@@ -169,14 +171,17 @@ class BaseRestClient:
         data: Optional[Any] = None,
     ) -> Tuple[int, Dict[str, Any], str]:
         url = self._url(path)
+        method_name = str(method or "GET").upper()
+        started_at = time.perf_counter()
+        status_code: Optional[int] = None
+        session = None
         try:
             assert_fd_available("exchange REST")
             request_headers = dict(headers or {})
-            session = getattr(self, "_request_session", None)
-            request_headers.setdefault("Connection", "keep-alive" if session is not None else "close")
-            send = session.request if session is not None else requests.request
-            with send(
-                    method=str(method or "GET").upper(),
+            session = getattr(self, "_request_session", None) or get_exchange_http_session()
+            request_headers.setdefault("Connection", "keep-alive")
+            with session.request(
+                    method=method_name,
                     url=url,
                     params=params or None,
                     json=json_body if json_body is not None else None,
@@ -186,13 +191,14 @@ class BaseRestClient:
                     verify=_get_requests_verify(),
                     proxies=_get_proxies(),
             ) as resp:
+                status_code = int(resp.status_code)
                 text = resp.text or ""
                 parsed: Dict[str, Any] = {}
                 try:
                     parsed = resp.json() if text else {}
                 except Exception:
                     parsed = {"raw_text": text[:2000]}
-                return int(resp.status_code), parsed, text
+                return status_code, parsed, text
         except UnicodeEncodeError as e:
             # requests/http.client requires header values to be latin-1 encodable.
             # This usually means user pasted API keys/passphrases containing non-ASCII characters,
@@ -222,6 +228,27 @@ class BaseRestClient:
             raise
         except ResourceExhaustedError as e:
             raise LiveTradingError(f"Resource exhausted: too many open files while calling exchange REST: {e}") from e
+        finally:
+            if session is not None:
+                try:
+                    session.cookies.clear()
+                except Exception:
+                    pass
+            elapsed_ms = int(max(0.0, time.perf_counter() - started_at) * 1000)
+            try:
+                threshold_ms = max(1, int(os.environ.get("LIVE_TRADING_HTTP_SLOW_MS", "750")))
+            except (TypeError, ValueError):
+                threshold_ms = 750
+            target = urlsplit(url)
+            safe_target = f"{target.netloc}{target.path}"
+            log = logger.info if elapsed_ms >= threshold_ms else logger.debug
+            log(
+                "Exchange REST timing method=%s target=%s status=%s elapsed_ms=%s pooled=true",
+                method_name,
+                safe_target,
+                status_code if status_code is not None else "error",
+                elapsed_ms,
+            )
 
     @staticmethod
     def _now_ms() -> int:

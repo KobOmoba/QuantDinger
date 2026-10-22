@@ -141,10 +141,13 @@ def test_bitget_keeps_channel_header_path_and_position_side():
 
     place_native_protection_orders(client, _request())
 
-    assert len(calls) == 2
-    assert all(path == "/api/v2/mix/order/place-tpsl-order" for path, _ in calls)
-    assert all(body["holdSide"] == "long" for _, body in calls)
-    assert {body["planType"] for _, body in calls} == {"loss_plan", "profit_plan"}
+    assert len(calls) == 1
+    path, body = calls[0]
+    assert path == "/api/v3/trade/place-strategy-order"
+    assert body["posSide"] == "long"
+    assert body["reduceOnly"] == "yes"
+    assert body["stopLoss"] == "90.0"
+    assert body["takeProfit"] == "120.0"
 
 
 def test_bybit_conditional_orders_are_reduce_only():

@@ -187,22 +187,24 @@ def _bybit_rows(client: BybitClient, symbol: str, side: str) -> List[Dict[str, A
 
 
 def _bitget_rows(client: Any, symbol: str, side: str, market_type: str) -> List[Dict[str, Any]]:
-    sym = to_bitget_um_symbol(symbol)
     if isinstance(client, BitgetMixClient):
         quote = str(symbol or "").split("/", 1)[-1].split(":", 1)[0].upper()
         product_type = "USDC-FUTURES" if quote == "USDC" else "USDT-FUTURES"
         raw = client._signed_request(
             "GET",
-            "/api/v2/mix/order/fills",
-            params={"productType": product_type, "symbol": sym, "limit": 100},
+            "/api/v3/trade/fills",
+            params={"category": product_type, "limit": 100},
         )
         data = raw.get("data") if isinstance(raw, dict) else {}
-        rows = data.get("fillList") if isinstance(data, dict) else []
+        rows = data.get("list") if isinstance(data, dict) else []
     else:
         raw = client._signed_request(
-            "GET", "/api/v2/spot/trade/fills", params={"symbol": sym, "limit": 100}
+            "GET",
+            "/api/v3/trade/fills",
+            params={"category": "SPOT", "limit": 100},
         )
-        rows = raw.get("data") if isinstance(raw, dict) else []
+        data = raw.get("data") if isinstance(raw, dict) else {}
+        rows = data.get("list") if isinstance(data, dict) else []
     want_side = "sell" if side == "long" else "buy"
     output: List[Dict[str, Any]] = []
     for row in rows if isinstance(rows, list) else []:
@@ -213,12 +215,12 @@ def _bitget_rows(client: Any, symbol: str, side: str, market_type: str) -> List[
             continue
         fee, fee_ccy = _fee_detail(row.get("feeDetail"), "USDT")
         item = _fill(
-            fill_id=row.get("tradeId") or row.get("fillId"),
-            qty=row.get("baseVolume") or row.get("size") or row.get("qty"),
-            price=row.get("price") or row.get("fillPrice"),
+            fill_id=row.get("execId") or row.get("tradeId") or row.get("fillId"),
+            qty=row.get("execQty") or row.get("baseVolume") or row.get("size") or row.get("qty"),
+            price=row.get("execPrice") or row.get("price") or row.get("fillPrice"),
             fee=fee,
             fee_ccy=fee_ccy,
-            closed_at=row.get("cTime") or row.get("uTime") or row.get("createdTime"),
+            closed_at=row.get("createdTime") or row.get("cTime") or row.get("uTime"),
             exchange_order_id=row.get("orderId") or row.get("order_id"),
             client_order_id=row.get("clientOid") or row.get("clientOrderId"),
         )

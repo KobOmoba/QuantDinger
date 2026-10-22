@@ -193,38 +193,58 @@ def _place_bitget(client: Any, request: NativeProtectionRequest) -> List[Dict[st
         product_type=request.product_type,
         base_size=request.quantity,
     )
+    close_side = "sell" if request.pos_side == "long" else "buy"
     base = {
-        "marginCoin": request.margin_coin.upper(),
-        "productType": request.product_type.upper(),
+        "category": request.product_type.upper(),
         "symbol": to_bitget_um_symbol(request.symbol),
-        "triggerType": "mark_price",
-        "executePrice": "0",
-        "holdSide": request.pos_side,
-        "size": client._dec_str(size, strict_precision=precision),
+        "type": "tpsl",
+        "side": close_side,
+        "posSide": request.pos_side,
+        "marginMode": "isolated" if request.margin_mode == "isolated" else "crossed",
+        "tpslMode": "partial",
+        "reduceOnly": "yes",
+        "qty": client._dec_str(size, strict_precision=precision),
     }
     responses: List[Dict[str, Any]] = []
-    for plan_type, price, suffix in (
-        ("loss_plan", request.stop_loss_price, "sl"),
-        ("profit_plan", request.take_profit_price, "tp"),
-    ):
-        if price <= 0:
-            continue
-        body = dict(base, planType=plan_type, triggerPrice=str(price))
+    if request.stop_loss_price > 0 or request.take_profit_price > 0:
+        body = dict(base)
+        if request.stop_loss_price > 0:
+            body.update(
+                stopLoss=str(request.stop_loss_price),
+                slTriggerBy="mark",
+                slOrderType="market",
+            )
+        if request.take_profit_price > 0:
+            body.update(
+                takeProfit=str(request.take_profit_price),
+                tpTriggerBy="mark",
+                tpOrderType="market",
+            )
         if request.client_order_id:
-            body["clientOid"] = f"{request.client_order_id}-{suffix}"[:64]
+            body["clientOid"] = str(request.client_order_id)[:32]
         responses.append(
-            client._signed_request("POST", "/api/v2/mix/order/place-tpsl-order", json_body=body)
+            client._signed_request("POST", "/api/v3/trade/place-strategy-order", json_body=body)
         )
     if request.trailing_stop_pct > 0:
-        body = dict(
-            base,
-            planType="moving_plan",
-            triggerPrice=str(_activation_price(request) or request.entry_price),
-            rangeRate=str(request.trailing_stop_pct * 100.0),
-        )
-        body.pop("executePrice", None)
+        body = {
+            "category": request.product_type.upper(),
+            "symbol": to_bitget_um_symbol(request.symbol),
+            "type": "trailing_stop",
+            "side": close_side,
+            "posSide": request.pos_side,
+            "marginMode": "isolated" if request.margin_mode == "isolated" else "crossed",
+            "reduceOnly": "yes",
+            "qty": client._dec_str(size, strict_precision=precision),
+            "trailingStopParams": {
+                "activationPrice": str(_activation_price(request) or request.entry_price),
+                "activationType": "mark",
+                "trailType": "ratio",
+                "trailVariance": str(request.trailing_stop_pct * 100.0),
+                "preOrderType": "market",
+            },
+        }
         responses.append(
-            client._signed_request("POST", "/api/v2/mix/order/place-tpsl-order", json_body=body)
+            client._signed_request("POST", "/api/v3/trade/place-strategy-order", json_body=body)
         )
     return responses
 

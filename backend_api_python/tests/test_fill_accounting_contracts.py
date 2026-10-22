@@ -319,15 +319,15 @@ def test_bitget_trade_history_paginates_before_aggregation(monkeypatch):
     def request(*args, **kwargs):
         calls.append(dict(kwargs["params"]))
         return (
-            {"data": {"fillList": [{"tradeId": str(i)} for i in range(100)], "endId": "99"}}
+            {"data": {"list": [{"execId": str(i)} for i in range(100)], "cursor": "99"}}
             if len(calls) == 1
-            else {"data": {"fillList": [{"tradeId": "100"}]}}
+            else {"data": {"list": [{"execId": "100"}], "cursor": ""}}
         )
 
     monkeypatch.setattr(client, "_signed_request", request)
     result = client.get_order_fills(symbol="BTC/USDT", product_type="USDT-FUTURES", order_id="1")
     assert len(result["data"]["fillList"]) == 101
-    assert calls[1]["idLessThan"] == "99"
+    assert calls[1]["cursor"] == "99"
 
 
 def test_cumulative_fee_update_has_distinct_durable_key():
@@ -406,7 +406,7 @@ def test_bitget_detail_retains_multiple_native_fee_currencies(monkeypatch):
                 "baseVolume": "1",
                 "priceAvg": "100",
                 "state": "filled",
-                "feeDetail": [{"feeCoin": "USDT", "totalFee": "-.1"}, {"feeCoin": "BGB", "totalFee": "-.2"}],
+                "feeDetail": [{"feeCoin": "USDT", "fee": ".1"}, {"feeCoin": "BGB", "fee": ".2"}],
             }
         },
     )

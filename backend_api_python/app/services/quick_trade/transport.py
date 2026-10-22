@@ -1,16 +1,19 @@
-"""Request-scoped transport lifecycle for Quick Trade routes."""
+"""Quick Trade access to the shared exchange HTTP transport."""
 
 from flask import g
-import requests
+
+from app.services.live_trading.http_transport import (
+    get_exchange_http_session,
+    release_exchange_http_session,
+)
 
 
 def open_quick_trade_transport() -> None:
-    """Open one TLS session for the current request."""
-    g.quick_trade_session = requests.Session()
+    """Attach the current worker thread's reusable session to this request."""
+    g.quick_trade_session = get_exchange_http_session()
 
 
 def close_quick_trade_transport(error=None) -> None:
-    """Close the request-scoped TLS session when present."""
-    session = g.pop("quick_trade_session", None)
-    if session is not None:
-        session.close()
+    """Drop request state while keeping the bounded connection pool warm."""
+    g.pop("quick_trade_session", None)
+    release_exchange_http_session()

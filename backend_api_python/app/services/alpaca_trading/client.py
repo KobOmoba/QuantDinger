@@ -356,6 +356,12 @@ class AlpacaClient:
             requested_notional = float(notional or 0.0)
             if (requested_quantity > 0) == (requested_notional > 0):
                 raise ValueError("Provide exactly one of quantity or notional")
+            if asset_class == "us_equity":
+                asset = self._trading_client.get_asset(sym)
+                if not bool(getattr(asset, "tradable", False)):
+                    raise ValueError("quickTrade.alpacaAssetNotTradable")
+                if requested_notional > 0 and not bool(getattr(asset, "fractionable", False)):
+                    raise ValueError("quickTrade.alpacaFractionalNotSupported")
             if side.lower() == "sell" and requested_quantity > 0:
                 positions = self._trading_client.get_all_positions()
                 matching = next(
@@ -652,6 +658,9 @@ class AlpacaClient:
             account_id = _as_str_id(getattr(acct, "id", None))
             currency = getattr(acct, "currency", None) or "USD"
             buying_power = _str_attr(acct, "buying_power")
+            regt_buying_power = _str_attr(acct, "regt_buying_power")
+            daytrading_buying_power = _str_attr(acct, "daytrading_buying_power")
+            non_marginable_buying_power = _str_attr(acct, "non_marginable_buying_power")
             cash = _str_attr(acct, "cash")
             portfolio_value = _str_attr(acct, "portfolio_value")
             equity = _str_attr(acct, "equity", portfolio_value)
@@ -667,6 +676,9 @@ class AlpacaClient:
                 "account_id": account_id,
                 "currency": currency,
                 "buying_power": buying_power,
+                "regt_buying_power": regt_buying_power,
+                "daytrading_buying_power": daytrading_buying_power,
+                "non_marginable_buying_power": non_marginable_buying_power,
                 "cash": cash,
                 "portfolio_value": portfolio_value,
                 "equity": equity,
@@ -680,6 +692,9 @@ class AlpacaClient:
                 "paper": self.config.paper,
                 "summary": {
                     "BuyingPower": {"value": buying_power, "currency": currency},
+                    "RegTBuyingPower": {"value": regt_buying_power, "currency": currency},
+                    "DayTradingBuyingPower": {"value": daytrading_buying_power, "currency": currency},
+                    "NonMarginableBuyingPower": {"value": non_marginable_buying_power, "currency": currency},
                     "Cash": {"value": cash, "currency": currency},
                     "PortfolioValue": {"value": portfolio_value, "currency": currency},
                     "Equity": {"value": equity, "currency": currency},
