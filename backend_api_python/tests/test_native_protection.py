@@ -150,6 +150,31 @@ def test_bitget_keeps_channel_header_path_and_position_side():
     assert body["takeProfit"] == "120.0"
 
 
+def test_bitget_classic_account_uses_v2_native_protection_orders():
+    from app.services.live_trading.bitget_compat import BitgetCompatibleMixClient
+
+    client = BitgetCompatibleMixClient(
+        api_key="classic-native-protection",
+        secret_key="secret",
+        passphrase="passphrase",
+        account_mode="classic",
+    )
+    routed = client._classic_client
+    routed._normalize_size = lambda **_kwargs: (Decimal("0.01"), 2)
+    calls = []
+    routed._signed_request = (
+        lambda method, path, json_body=None, params=None: calls.append((path, json_body))
+        or {"code": "00000"}
+    )
+
+    place_native_protection_orders(client, _request())
+
+    assert len(calls) == 2
+    assert all(path == "/api/v2/mix/order/place-tpsl-order" for path, _body in calls)
+    assert {body["planType"] for _path, body in calls} == {"loss_plan", "profit_plan"}
+    assert all(body["holdSide"] == "long" for _path, body in calls)
+
+
 def test_bybit_conditional_orders_are_reduce_only():
     from app.services.live_trading.bybit import BybitClient
 

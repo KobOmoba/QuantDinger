@@ -123,7 +123,7 @@ def _crypto_credential_config(data: dict, exchange_id: str) -> dict:
     environment = exchange_trading_environment(data, exchange_id)
     market_scope = exchange_market_scope(data)
     validate_exchange_environment(exchange_id, environment, market_scope)
-    return {
+    config = {
         'exchange_id': exchange_id,
         'api_key': api_key,
         'secret_key': secret_key,
@@ -132,6 +132,14 @@ def _crypto_credential_config(data: dict, exchange_id: str) -> dict:
         'market_scope': market_scope,
         'enable_demo_trading': environment != 'live',
     }
+    if exchange_id == 'bitget':
+        requested_mode = str(
+            data.get('bitget_account_mode') or data.get('bitgetAccountMode') or 'auto'
+        ).strip().lower()
+        if requested_mode not in {'auto', 'classic', 'uta'}:
+            raise ValueError('INVALID_BITGET_ACCOUNT_MODE')
+        config['bitget_account_mode'] = requested_mode
+    return config
 
 
 def _probe_crypto_credential(config: dict) -> list[str]:

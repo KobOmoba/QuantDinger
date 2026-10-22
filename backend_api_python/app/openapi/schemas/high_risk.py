@@ -59,6 +59,11 @@ class CredentialCreateRequestSchema(Schema):
     network = fields.String(load_default="", validate=validate.Length(max=32))
     market_scope = fields.String(load_default="", validate=validate.OneOf(["", "spot", "swap", "both"]))
     marketScope = fields.String(load_default="", validate=validate.Length(max=32))
+    bitget_account_mode = fields.String(
+        load_default="",
+        validate=validate.OneOf(["", "auto", "classic", "uta"]),
+    )
+    bitgetAccountMode = fields.String(load_default="", validate=validate.Length(max=32))
     ibkr_host = fields.String(load_default="127.0.0.1", validate=validate.Length(max=255))
     ibkr_port = fields.Integer(load_default=7497, validate=validate.Range(min=1, max=65535))
     ibkr_client_id = fields.Integer(load_default=7, validate=validate.Range(min=0, max=2147483647))

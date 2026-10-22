@@ -188,6 +188,14 @@ def _place_okx(client: Any, request: NativeProtectionRequest) -> List[Dict[str, 
 
 
 def _place_bitget(client: Any, request: NativeProtectionRequest) -> List[Dict[str, Any]]:
+    resolver = getattr(client, "_resolve_bitget_client", None)
+    if callable(resolver):
+        client = resolver()
+    from app.services.live_trading.bitget_classic import BitgetClassicMixClient
+
+    if isinstance(client, BitgetClassicMixClient):
+        return _place_bitget_classic(client, request)
+
     size, precision = client._normalize_size(
         symbol=request.symbol,
         product_type=request.product_type,
@@ -245,6 +253,56 @@ def _place_bitget(client: Any, request: NativeProtectionRequest) -> List[Dict[st
         }
         responses.append(
             client._signed_request("POST", "/api/v3/trade/place-strategy-order", json_body=body)
+        )
+    return responses
+
+
+def _place_bitget_classic(client: Any, request: NativeProtectionRequest) -> List[Dict[str, Any]]:
+    size, precision = client._normalize_size(
+        symbol=request.symbol,
+        product_type=request.product_type,
+        base_size=request.quantity,
+    )
+    base = {
+        "marginCoin": request.margin_coin.upper(),
+        "productType": request.product_type.upper(),
+        "symbol": to_bitget_um_symbol(request.symbol),
+        "triggerType": "mark_price",
+        "executePrice": "0",
+        "holdSide": request.pos_side,
+        "size": client._dec_str(size, strict_precision=precision),
+    }
+    responses: List[Dict[str, Any]] = []
+    for plan_type, price, suffix in (
+        ("loss_plan", request.stop_loss_price, "sl"),
+        ("profit_plan", request.take_profit_price, "tp"),
+    ):
+        if price <= 0:
+            continue
+        body = dict(base, planType=plan_type, triggerPrice=str(price))
+        if request.client_order_id:
+            body["clientOid"] = f"{request.client_order_id}-{suffix}"[:64]
+        responses.append(
+            client._signed_request(
+                "POST",
+                "/api/v2/mix/order/place-tpsl-order",
+                json_body=body,
+            )
+        )
+    if request.trailing_stop_pct > 0:
+        body = dict(
+            base,
+            planType="moving_plan",
+            triggerPrice=str(_activation_price(request) or request.entry_price),
+            rangeRate=str(request.trailing_stop_pct * 100.0),
+        )
+        body.pop("executePrice", None)
+        responses.append(
+            client._signed_request(
+                "POST",
+                "/api/v2/mix/order/place-tpsl-order",
+                json_body=body,
+            )
         )
     return responses
 

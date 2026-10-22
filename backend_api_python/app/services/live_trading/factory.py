@@ -18,8 +18,10 @@ from app.services.live_trading.base import BaseRestClient, LiveTradingError
 from app.services.live_trading.binance import BinanceFuturesClient
 from app.services.live_trading.binance_spot import BinanceSpotClient
 from app.services.live_trading.okx import OkxClient
-from app.services.live_trading.bitget import BitgetMixClient
-from app.services.live_trading.bitget_spot import BitgetSpotClient
+from app.services.live_trading.bitget_compat import (
+    BitgetCompatibleMixClient,
+    BitgetCompatibleSpotClient,
+)
 from app.services.live_trading.bitget_reality import BitgetRealityClient
 from app.services.live_trading.bybit import BybitClient
 from app.services.live_trading.gate import GateSpotClient, GateStockClient, GateUsdtFuturesClient
@@ -268,19 +270,21 @@ def create_client(exchange_config: Dict[str, Any], *, market_type: str = "swap")
                     simulated_trading=is_demo,
                     instrument_id=_get(exchange_config, "instrument_id", "instrumentId"),
                 )
-            return BitgetSpotClient(
+            return BitgetCompatibleSpotClient(
                 api_key=api_key,
                 secret_key=secret_key,
                 passphrase=passphrase,
                 base_url=base_url,
                 simulated_trading=is_demo,
+                account_mode=_get(exchange_config, "bitget_account_mode", "bitgetAccountMode") or "auto",
             )
-        return BitgetMixClient(
+        return BitgetCompatibleMixClient(
             api_key=api_key,
             secret_key=secret_key,
             passphrase=passphrase,
             base_url=base_url,
             simulated_trading=is_demo,
+            account_mode=_get(exchange_config, "bitget_account_mode", "bitgetAccountMode") or "auto",
         )
 
     if exchange_id == "bybit":

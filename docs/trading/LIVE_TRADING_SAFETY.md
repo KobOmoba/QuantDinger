@@ -16,6 +16,10 @@ This guide defines the minimum checks before moving from backtest or signal mode
 
 HTX equity products are rejected until authoritative metadata and an execution contract are available. Mixed-market live deployment is unsupported. See [Section 18 of the Strategy API V2 guide](STRATEGY_DEV_GUIDE.md#18-deployment-and-live-boundaries) for canonical identifiers and the full boundary.
 
+### Bitget account modes
+
+Bitget credentials default to automatic account-mode detection. Unified accounts use UTA V3, while Classic or `hybrid` accounts use the corresponding Classic V2 spot and futures APIs. Accounts reported as `switching` or `upgrading` are temporarily blocked from trading so an order cannot be sent to the wrong account during migration. An operator may pin a credential to `uta` or `classic` with `bitget_account_mode` when automatic detection is unsuitable.
+
 ## Preflight checklist
 
 1. **Account:** use a dedicated subaccount or low-balance account; grant required trading permissions only and disable withdrawals.
