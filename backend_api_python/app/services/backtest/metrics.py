@@ -21,6 +21,7 @@ _FREQUENCY_SECONDS = {
     "4h": 14_400,
     "1d": 86_400,
     "1w": 604_800,
+    "1mo": 2_592_000,
 }
 
 
@@ -165,6 +166,20 @@ def _valid_interval_mask(index: pd.DatetimeIndex, frequency: str, market: str) -
         if delta == expected:
             valid.append(True)
             continue
+        if frequency == "1mo":
+            start_date = (
+                equity_bar_session_date(start, market)
+                if market and market in CALENDAR_BY_MARKET
+                else start.date()
+            )
+            end_date = (
+                equity_bar_session_date(end, market)
+                if market and market in CALENDAR_BY_MARKET
+                else end.date()
+            )
+            months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month)
+            valid.append(months == 1 and pd.Timedelta(days=20) <= delta <= pd.Timedelta(days=40))
+            continue
         if str(market or "").strip() in {"Crypto", "Cryptocurrency"}:
             valid.append(False)
             continue
@@ -197,7 +212,20 @@ def _are_consecutive_equity_sessions(start: pd.Timestamp, end: pd.Timestamp, mar
 
 def _normalize_frequency(value: object) -> str:
     normalized = str(value or "1d").strip().lower()
-    aliases = {"daily": "1d", "day": "1d", "d": "1d", "weekly": "1w", "week": "1w", "w": "1w"}
+    aliases = {
+        "daily": "1d",
+        "day": "1d",
+        "d": "1d",
+        "1day": "1d",
+        "weekly": "1w",
+        "week": "1w",
+        "w": "1w",
+        "1week": "1w",
+        "1wk": "1w",
+        "monthly": "1mo",
+        "month": "1mo",
+        "1month": "1mo",
+    }
     return aliases.get(normalized, normalized)
 
 
