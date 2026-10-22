@@ -19,7 +19,7 @@ websocket-client>=1.9.2,<2
 python-socks>=3.1.1,<4
 # CVE-2026-84377; 1.93.2+
 litellm>=1.104.0,<1.105
-certifi>=2026.7.22
+certifi>=2026.10.19
 PySocks>=1.7.1
 akshare>=1.19.1
 # GHSA-752w-5fwx-jx9f and 2026 JWT validation advisories; 2.15.0+
@@ -30,6 +30,8 @@ cryptography>=50.0.2,<51
 # TOTP MFA and QR code generation
 pyotp>=2.10.0
 qrcode[pil]>=8.2
+# Pillow 13.0.0 resolves the 2026 image decoder security advisories.
+Pillow>=13.0.0,<14
 # PostgreSQL support (multi-user mode)
 psycopg2-binary>=2.9.13
 # Runtime metrics
@@ -49,8 +51,8 @@ flask-smorest>=0.47.0,<0.48
 marshmallow>=4.3.1,<5
 PyYAML>=6.0.3
 # Server-side PDF export for AI analysis reports
-# PDF parser security advisories; 6.19.0+
-pypdf>=6.19.0,<7
+# PDF parser security advisories through CVE-2026-113786; 6.21.1+
+pypdf>=6.21.1,<7
 reportlab>=5.0.1
 # Password hashing
 bcrypt>=5.0.0

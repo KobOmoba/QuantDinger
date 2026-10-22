@@ -280,17 +280,28 @@ class BitgetMixClient(BaseRestClient):
                 },
             )
             data = raw.get("data") or {}
-            if isinstance(data, dict) and isinstance(data.get("list"), list):
-                rows.extend(data["list"])
+            if isinstance(data, dict):
+                records = data.get("list")
+                if not isinstance(records, list):
+                    records = data.get("bills")
+                if isinstance(records, list):
+                    rows.extend(records)
         out = []
+        seen = set()
         for item in rows or []:
             if not isinstance(item, dict):
                 continue
             amount = float(item.get("amount") or item.get("balanceChange") or 0.0)
+            record_id = str(item.get("id") or item.get("billId") or "")
+            record_time = int(item.get("ts") or item.get("cTime") or 0)
+            dedupe_key = record_id or f"{record_time}:{amount}:{item.get('symbol') or symbol}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
             out.append({
-                "id": str(item.get("id") or f"{item.get('ts')}:{amount}"),
+                "id": record_id or f"{record_time}:{amount}",
                 "symbol": str(item.get("symbol") or symbol), "amount": amount,
-                "asset": str(item.get("coin") or "USDT").upper(), "time": int(item.get("ts") or 0),
+                "asset": str(item.get("coin") or "USDT").upper(), "time": record_time,
                 "raw": item,
             })
         return out
