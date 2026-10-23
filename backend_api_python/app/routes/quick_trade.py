@@ -55,6 +55,7 @@ from app.services.quick_trade.orders import (
 )
 from app.services.quick_trade.symbols import is_supported_crypto_exchange, symbols_match as quick_trade_symbols_match
 from app.services.quick_trade.history import parse_quick_trade_metadata, history_order_status
+from app.services.quick_trade.trade_history import resolve_trade_history
 from app.services.quick_trade.fee_reconciliation import fee_update_from_fill, reconcile_quick_trade_fees
 from app.services.quick_trade.order_reconciliation import reconcile_quick_trade_orders
 from app.services.quick_trade.account_warmup import configure_quick_trade_derivatives, warm_quick_trade_account
@@ -1876,43 +1877,8 @@ def get_history():
                 "created_at": to_utc_iso(r.get("created_at")) or str(r.get("created_at") or ""),
             })
 
-        exchange_history = {"supported": False, "trades": []}
-        if credential_id > 0 and symbol and market_type in ("spot", "swap"):
-            try:
-                from app.services.quick_trade.trade_history import exchange_trade_history
-
-                config = build_exchange_config(credential_id, user_id, {"market_type": market_type})
-                client = create_exchange_client(config, market_type=market_type)
-                exchange_history = exchange_trade_history(
-                    client,
-                    symbol,
-                    market_type=market_type,
-                    limit=limit,
-                    offset=offset,
-                )
-            except Exception as exc:
-                logger.info("Native exchange trade history unavailable: %s", exc)
-
-        if exchange_history.get("supported"):
-            active_statuses = {
-                "new", "open", "pending", "submitted", "partially_filled",
-                "partially-filled", "accepted", "cancel_pending",
-            }
-            pending_orders = [
-                trade for trade in trades
-                if str(trade.get("status") or "").strip().lower() in active_statuses
-            ]
-            trades = pending_orders + list(exchange_history.get("trades") or [])
-            trades.sort(key=lambda trade: str(trade.get("created_at") or ""), reverse=True)
-
-        return jsonify({
-            "code": 1,
-            "msg": "success",
-            "data": {
-                "trades": trades,
-                "source": "exchange" if exchange_history.get("supported") else "local_fallback",
-            },
-        })
+        data = resolve_trade_history(trades, user_id, credential_id, symbol, market_type, limit, offset)
+        return jsonify({"code": 1, "msg": "success", "data": data})
     except Exception as e:
         logger.error(f"get_history failed: {e}")
         return jsonify({"code": 0, "msg": str(e)}), 500

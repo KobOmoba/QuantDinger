@@ -24,10 +24,16 @@ from app.services.live_trading.symbols import (
     to_okx_spot_inst_id,
     to_okx_swap_inst_id,
 )
+from app.services.quick_trade.credentials import build_exchange_config, create_exchange_client
 from app.utils.logger import get_logger
 
 
 logger = get_logger(__name__)
+
+ACTIVE_ORDER_STATUSES = frozenset({
+    "new", "open", "pending", "submitted", "partially_filled",
+    "partially-filled", "accepted", "cancel_pending",
+})
 
 
 def _number(value: Any, default: float = 0.0) -> float:
@@ -617,3 +623,41 @@ def exchange_trade_history(
                 result["trades"] = _normalize_rows(result.get("trades") or [], limit=limit, offset=offset)
             return result
     return {"supported": False, "trades": []}
+
+
+def resolve_trade_history(
+    local_trades: Iterable[Dict[str, Any]],
+    user_id: int,
+    credential_id: int,
+    symbol: str,
+    market_type: str,
+    limit: int,
+    offset: int,
+) -> Dict[str, Any]:
+    """Prefer authoritative exchange fills while retaining active local orders."""
+    local_rows = list(local_trades)
+    fallback = {"trades": local_rows, "source": "local_fallback"}
+    if credential_id <= 0 or not symbol or market_type not in {"spot", "swap"}:
+        return fallback
+    try:
+        config = build_exchange_config(credential_id, user_id, {"market_type": market_type})
+        client = create_exchange_client(config, market_type=market_type)
+        exchange_history = exchange_trade_history(
+            client,
+            symbol,
+            market_type=market_type,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as exc:
+        logger.info("Native exchange trade history unavailable: %s", exc)
+        return fallback
+    if not exchange_history.get("supported"):
+        return fallback
+    pending_orders = [
+        trade for trade in local_rows
+        if str(trade.get("status") or "").strip().lower() in ACTIVE_ORDER_STATUSES
+    ]
+    trades = pending_orders + list(exchange_history.get("trades") or [])
+    trades.sort(key=lambda trade: str(trade.get("created_at") or ""), reverse=True)
+    return {"trades": trades, "source": "exchange"}

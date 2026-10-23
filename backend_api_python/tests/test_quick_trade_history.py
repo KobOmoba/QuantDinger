@@ -184,9 +184,9 @@ def test_exchange_history_prefers_native_fills_over_local_filled_rows(monkeypatc
     }
     monkeypatch.setattr(quick_trade, "get_db_connection", fake_connection)
     monkeypatch.setattr(quick_trade, "_sync_exchange_close_fills", lambda **kwargs: 0)
-    monkeypatch.setattr(quick_trade, "build_exchange_config", lambda *args, **kwargs: {})
-    monkeypatch.setattr(quick_trade, "create_exchange_client", lambda *args, **kwargs: object())
     from app.services.quick_trade import trade_history
+    monkeypatch.setattr(trade_history, "build_exchange_config", lambda *args, **kwargs: {})
+    monkeypatch.setattr(trade_history, "create_exchange_client", lambda *args, **kwargs: object())
     monkeypatch.setattr(
         trade_history,
         "exchange_trade_history",
