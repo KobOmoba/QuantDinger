@@ -186,7 +186,7 @@ def test_binance_position_history_rebuilds_exchange_fill_cycle(monkeypatch):
             "time": 1792692260000,
         },
     ]
-    monkeypatch.setattr(client, "_signed_request", lambda *args, **kwargs: rows)
+    monkeypatch.setattr(client, "get_user_trades", lambda **kwargs: rows)
 
     result = binance_position_history(client, "BTC/USDT")
 
@@ -200,6 +200,57 @@ def test_binance_position_history_rebuilds_exchange_fill_cycle(monkeypatch):
     assert position["gross_pnl"] == pytest.approx(1)
     assert position["fee"] == pytest.approx(0.01621)
     assert position["pnl"] == pytest.approx(0.98379)
+
+
+def test_binance_trade_history_uses_exchange_fills_and_infers_short_close(monkeypatch):
+    from app.services.live_trading.binance import BinanceFuturesClient
+    from app.services.quick_trade.position_activity import binance_trade_history
+
+    client = object.__new__(BinanceFuturesClient)
+    rows = [
+        {
+            "id": 10,
+            "orderId": 100,
+            "symbol": "SOLUSDT",
+            "side": "SELL",
+            "positionSide": "BOTH",
+            "price": "104.03",
+            "qty": "4.8",
+            "realizedPnl": "0",
+            "commission": "0.10",
+            "commissionAsset": "USDT",
+            "time": 1792692200000,
+        },
+        {
+            "id": 11,
+            "orderId": 101,
+            "symbol": "SOLUSDT",
+            "side": "BUY",
+            "positionSide": "BOTH",
+            "price": "103.92",
+            "qty": "4.8",
+            "realizedPnl": "0.528",
+            "commission": "0.10",
+            "commissionAsset": "USDT",
+            "time": 1792692260000,
+        },
+    ]
+    monkeypatch.setattr(client, "get_user_trades", lambda **kwargs: rows)
+
+    result = binance_trade_history(client, "SOL/USDT", market_type="swap")
+
+    assert result["supported"] is True
+    assert len(result["trades"]) == 2
+    close_fill = result["trades"][0]
+    assert close_fill["source"] == "exchange"
+    assert close_fill["order_type"] == "fill"
+    assert close_fill["is_close"] is True
+    assert close_fill["close_side"] == "short"
+    assert close_fill["realized_pnl"] == pytest.approx(0.528)
+    assert close_fill["filled_amount"] == pytest.approx(4.8)
+    assert close_fill["avg_fill_price"] == pytest.approx(103.92)
+    assert close_fill["commission_quote"] == pytest.approx(0.10)
+    assert result["trades"][1]["realized_pnl"] is None
 
 
 def test_gate_native_protection_fills_groups_partial_fills_and_ignores_regular_orders(monkeypatch):

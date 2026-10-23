@@ -410,6 +410,26 @@ def get_orders():
         return jsonify({"success": False, "error": str(e)}), 500
 
 
+@alpaca_blp.route('/fills', methods=['GET'])
+@login_required
+def get_fills():
+    """Get authoritative Alpaca fill activities for the selected account."""
+    try:
+        client, err = _require_connected_client()
+        if err is not None:
+            return err
+        symbol = str(request.args.get("symbol") or "").strip()
+        limit = int(request.args.get("limit") or 100)
+        return jsonify({
+            "success": True,
+            "data": client.get_fill_history(symbol=symbol, limit=limit),
+            "source": "exchange",
+        })
+    except Exception as e:
+        logger.error(f"Get Alpaca fills failed: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ==================== Trading ====================
 
 @alpaca_blp.route('/order', methods=['POST'])

@@ -1084,7 +1084,7 @@ def get_position():
                 request.args.get("api_family", ""),
             ),
             _compute_position,
-            ttl_sec=8,
+            ttl_sec=2,
             stale_ttl_sec=90,
             timeout_sec=10,
             namespace="quick_trade_position",
@@ -1876,7 +1876,43 @@ def get_history():
                 "created_at": to_utc_iso(r.get("created_at")) or str(r.get("created_at") or ""),
             })
 
-        return jsonify({"code": 1, "msg": "success", "data": {"trades": trades}})
+        exchange_history = {"supported": False, "trades": []}
+        if credential_id > 0 and symbol and market_type in ("spot", "swap"):
+            try:
+                from app.services.quick_trade.trade_history import exchange_trade_history
+
+                config = build_exchange_config(credential_id, user_id, {"market_type": market_type})
+                client = create_exchange_client(config, market_type=market_type)
+                exchange_history = exchange_trade_history(
+                    client,
+                    symbol,
+                    market_type=market_type,
+                    limit=limit,
+                    offset=offset,
+                )
+            except Exception as exc:
+                logger.info("Native exchange trade history unavailable: %s", exc)
+
+        if exchange_history.get("supported"):
+            active_statuses = {
+                "new", "open", "pending", "submitted", "partially_filled",
+                "partially-filled", "accepted", "cancel_pending",
+            }
+            pending_orders = [
+                trade for trade in trades
+                if str(trade.get("status") or "").strip().lower() in active_statuses
+            ]
+            trades = pending_orders + list(exchange_history.get("trades") or [])
+            trades.sort(key=lambda trade: str(trade.get("created_at") or ""), reverse=True)
+
+        return jsonify({
+            "code": 1,
+            "msg": "success",
+            "data": {
+                "trades": trades,
+                "source": "exchange" if exchange_history.get("supported") else "local_fallback",
+            },
+        })
     except Exception as e:
         logger.error(f"get_history failed: {e}")
         return jsonify({"code": 0, "msg": str(e)}), 500

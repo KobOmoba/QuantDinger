@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from math import isfinite
 
 from app.services.live_trading.binance import BinanceFuturesClient
+from app.services.live_trading.binance_spot import BinanceSpotClient
 from app.services.live_trading.bitget import BitgetMixClient
 from app.services.live_trading.bitget_classic import BitgetClassicMixClient
 from app.services.live_trading.bybit import BybitClient
@@ -121,11 +122,7 @@ def binance_position_history(client, symbol, limit=50):
         return {"supported": False, "positions": []}
     native_symbol = to_binance_futures_symbol(symbol)
     try:
-        rows = client._signed_request(
-            "GET",
-            "/fapi/v1/userTrades",
-            params={"symbol": native_symbol, "limit": 1000},
-        )
+        rows = client.get_user_trades(symbol=symbol, limit=1000)
     except Exception as exc:
         logger.info("Binance native trade history unavailable: %s", exc)
         return {"supported": False, "positions": []}
@@ -219,6 +216,99 @@ def binance_position_history(client, symbol, limit=50):
 
     result.sort(key=lambda row: str(row.get("closed_at") or ""), reverse=True)
     return {"supported": True, "positions": result[: max(1, int(limit or 50))]}
+
+
+def binance_trade_history(client, symbol, market_type="swap", limit=50):
+    """Return exchange-owned Binance fills for the selected instrument."""
+    market = str(market_type or "swap").strip().lower()
+    if isinstance(client, BinanceFuturesClient) and market == "swap":
+        reader = client.get_user_trades
+    elif isinstance(client, BinanceSpotClient) and market == "spot":
+        reader = client.get_my_trades
+    else:
+        return {"supported": False, "trades": []}
+
+    native_symbol = to_binance_futures_symbol(symbol)
+    try:
+        rows = reader(symbol=symbol, limit=max(1, min(int(limit or 50), 1000)))
+    except Exception as exc:
+        logger.info("Binance native trade history unavailable: %s", exc)
+        return {"supported": False, "trades": []}
+
+    net_quantity = 0.0
+    normalized = []
+    ordered = sorted(
+        (row for row in (rows or []) if isinstance(row, dict)),
+        key=lambda row: (_number(row.get("time")), _number(row.get("id") or row.get("tradeId"))),
+    )
+    for row in ordered:
+        if str(row.get("symbol") or "").upper() != native_symbol:
+            continue
+        quantity = abs(_number(row.get("qty") or row.get("quantity")))
+        price = _number(row.get("price"))
+        if quantity <= 0 or price <= 0:
+            continue
+        side = str(row.get("side") or ("BUY" if row.get("isBuyer") else "SELL")).strip().lower()
+        if side not in {"buy", "sell"}:
+            continue
+        position_side = str(row.get("positionSide") or "BOTH").strip().upper()
+        realized_value = row.get("realizedPnl")
+        realized_pnl = None if realized_value in (None, "") else _number(realized_value)
+        is_close = False
+        close_side = ""
+        if market == "swap":
+            if position_side == "LONG":
+                is_close = side == "sell"
+                close_side = "long" if is_close else ""
+            elif position_side == "SHORT":
+                is_close = side == "buy"
+                close_side = "short" if is_close else ""
+            else:
+                delta = quantity if side == "buy" else -quantity
+                if net_quantity > 1e-15 and delta < 0:
+                    is_close = True
+                    close_side = "long"
+                elif net_quantity < -1e-15 and delta > 0:
+                    is_close = True
+                    close_side = "short"
+                net_quantity += delta
+                if abs(net_quantity) <= 1e-15:
+                    net_quantity = 0.0
+            if realized_pnl is not None and abs(realized_pnl) > 1e-15:
+                is_close = True
+                close_side = close_side or ("short" if side == "buy" else "long")
+
+        commission_ccy = str(row.get("commissionAsset") or "").upper()
+        commission = abs(_number(row.get("commission")))
+        quote_ccy = str(symbol or "").split("/", 1)[-1].split(":", 1)[0].upper()
+        trade_id = str(row.get("id") or row.get("tradeId") or f"{row.get('orderId')}:{row.get('time')}")
+        normalized.append({
+            "id": f"exchange-{trade_id}",
+            "symbol": symbol,
+            "side": side,
+            "order_type": "fill",
+            "amount": quantity * price,
+            "price": 0.0,
+            "leverage": 0,
+            "market_type": market,
+            "status": "filled",
+            "exchange_order_id": str(row.get("orderId") or ""),
+            "client_order_id": str(row.get("clientOrderId") or ""),
+            "filled_amount": quantity,
+            "avg_fill_price": price,
+            "commission": commission,
+            "commission_ccy": commission_ccy,
+            "commission_quote": commission if not commission_ccy or commission_ccy == quote_ccy else None,
+            "fee_status": "confirmed" if commission > 0 else "actual_zero",
+            "realized_pnl": realized_pnl if is_close else None,
+            "source": "exchange",
+            "is_close": is_close,
+            "close_side": close_side,
+            "created_at": utc_time(row.get("time")),
+        })
+
+    normalized.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    return {"supported": True, "trades": normalized[: max(1, int(limit or 50))]}
 
 
 def bybit_position_history(client, symbol, limit=50):
