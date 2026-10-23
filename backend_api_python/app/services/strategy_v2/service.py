@@ -32,7 +32,12 @@ from .frequencies import normalize_frequency, periods_per_year
 from .models import InstrumentSpec, StrategyManifest
 from .market_data import load_strategy_frame
 from .runtime import StrategyV2BacktestRunner
-from .readiness import validate_universe_history, validate_warmup, validate_fundamentals
+from .readiness import (
+    validate_fundamentals,
+    validate_universe_history,
+    validate_warmup,
+    warmup_shortfalls,
+)
 from .snapshot import MarketDataSnapshotStore, canonical_frame_bytes
 from .storage import StrategyBacktestRepository, compact_backtest_result
 
@@ -226,7 +231,36 @@ class StrategyV2BacktestService:
         frames = frequency_frames.get(frequency, {})
         if not frames:
             raise StrategyV2ContractError("strategyV2.noMarketData")
-        validate_warmup(frequency_frames, manifest.warmup_bars, start_date, candidates)
+        if manifest.universe.kind == "static":
+            validate_warmup(frequency_frames, manifest.warmup_bars, start_date, candidates)
+        else:
+            shortfalls = warmup_shortfalls(
+                frequency_frames,
+                manifest.warmup_bars,
+                start_date,
+                candidates,
+            )
+            if shortfalls:
+                excluded_symbols = {item["symbol"] for item in shortfalls}
+                remaining_symbols = set(frames) - excluded_symbols
+                if not remaining_symbols:
+                    validate_warmup(
+                        frequency_frames,
+                        manifest.warmup_bars,
+                        start_date,
+                        candidates,
+                    )
+                for item_frames in frequency_frames.values():
+                    for symbol in excluded_symbols:
+                        item_frames.pop(symbol, None)
+                skipped.extend({
+                    "symbol": item["symbol"],
+                    "frequency": item["frequency"],
+                    "reason": "strategyV2.insufficientWarmupData",
+                    "availableBars": item["count"],
+                    "requiredBars": item["required"],
+                } for item in shortfalls)
+                frames = frequency_frames.get(frequency, {})
         if manifest.fundamental_dependencies:
             enricher = self.fundamental_enricher or get_fundamental_data_service().enrich_panel
             frames = enricher(frames, candidates)

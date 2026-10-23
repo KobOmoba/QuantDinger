@@ -491,6 +491,82 @@ def rebalance(context, data):
     ]
 
 
+def test_dynamic_universe_excludes_members_without_required_warmup(tmp_path):
+    class DynamicUniverse:
+        @staticmethod
+        def list_universes(_user_id):
+            return [{"id": 7, "code": "nasdaq100", "source_ref": "NDX"}]
+
+        @staticmethod
+        def candidate_members(_user_id, _universe_id, *, start, end):
+            del start, end
+            return [
+                {"market": "USStock", "symbol": "AAPL"},
+                {"market": "USStock", "symbol": "EA"},
+            ]
+
+        @staticmethod
+        def resolve_members(_user_id, _universe_id, *, as_of):
+            del as_of
+            return [
+                {"market": "USStock", "symbol": "AAPL"},
+                {"market": "USStock", "symbol": "EA"},
+            ]
+
+    start_date = datetime(2026, 1, 5)
+
+    def frame_fetcher(_market, symbol, *_args, **_kwargs):
+        index = (
+            pd.bdate_range(end="2026-01-09", periods=275)
+            if symbol == "AAPL"
+            else pd.DatetimeIndex(["2026-01-02"])
+        )
+        return pd.DataFrame(
+            {
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "volume": 1000.0,
+            },
+            index=index,
+        )
+
+    code = """
+def initialize(context):
+    context.set_universe(index="INDEX:NASDAQ100")
+    context.subscribe(frequency="1d")
+    context.set_warmup(260)
+
+def on_rebalance(context, data):
+    pass
+"""
+    service = StrategyV2BacktestService(
+        repository=_Repository(),
+        universe_service=DynamicUniverse(),
+        frame_fetcher=frame_fetcher,
+        snapshot_store=MarketDataSnapshotStore(tmp_path),
+    )
+
+    _, result = service.run(
+        user_id=1,
+        code=code,
+        start_date=start_date,
+        end_date=datetime(2026, 1, 9, 23, 59),
+        initial_capital=10000,
+        persist=False,
+    )
+
+    assert result["diagnostics"]["symbolsUsed"] == 1
+    assert result["diagnostics"]["symbolsSkipped"] == [{
+        "symbol": "USStock:EA",
+        "frequency": "1d",
+        "reason": "strategyV2.insufficientWarmupData",
+        "availableBars": 1,
+        "requiredBars": 260,
+    }]
+
+
 def test_v2_service_accepts_a_controlled_fundamental_enricher():
     code = """
 def initialize(context):

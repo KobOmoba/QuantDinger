@@ -14,9 +14,9 @@ def validate_universe_history(universe, start_date):
             )
 
 
-def validate_warmup(frequency_frames, warmup_bars, start_date, members=()):
+def warmup_shortfalls(frequency_frames, warmup_bars, start_date, members=()):
     if warmup_bars <= 0:
-        return
+        return []
     start = pd.Timestamp(start_date)
     start = start.tz_localize("UTC") if start.tzinfo is None else start.tz_convert("UTC")
     joined = {item.get("key"): item.get("valid_from") for item in members}
@@ -30,9 +30,23 @@ def validate_warmup(frequency_frames, warmup_bars, start_date, members=()):
             usable = frame.reindex(columns=["open", "high", "low", "close"]).apply(pd.to_numeric, errors="coerce")
             count = int(((index < first_active) & usable.notna().all(axis=1) & (usable > 0).all(axis=1)).sum())
             if count < warmup_bars:
-                problems.append(f"{symbol}@{frequency}={count}/{warmup_bars}")
+                problems.append({
+                    "symbol": symbol,
+                    "frequency": frequency,
+                    "count": count,
+                    "required": warmup_bars,
+                })
+    return problems
+
+
+def validate_warmup(frequency_frames, warmup_bars, start_date, members=()):
+    problems = warmup_shortfalls(frequency_frames, warmup_bars, start_date, members)
     if problems:
-        raise StrategyV2ContractError("strategyV2.insufficientWarmupData:" + ";".join(problems[:6]))
+        details = ";".join(
+            f"{item['symbol']}@{item['frequency']}={item['count']}/{item['required']}"
+            for item in problems[:6]
+        )
+        raise StrategyV2ContractError("strategyV2.insufficientWarmupData:" + details)
 
 
 def validate_fundamentals(frames, required, as_of=None):
