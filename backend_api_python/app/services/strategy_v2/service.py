@@ -32,7 +32,7 @@ from app.utils.logger import get_logger
 
 from .contract import StrategyV2ContractError, compile_strategy_v2
 from .factor_research import FactorResearchEngine
-from .frequencies import normalize_frequency, periods_per_year
+from .frequencies import SUPPORTED_SUBSCRIPTION_FREQUENCIES, normalize_frequency, periods_per_year
 from .models import InstrumentSpec, StrategyManifest
 from .market_data import load_strategy_frame
 from .runtime import StrategyV2BacktestRunner
@@ -151,6 +151,126 @@ class StrategyV2BacktestService:
         result.update({
             "manifest": manifest.metadata(),
             "universeId": universe_id,
+            "symbolsRequested": len(candidates),
+            "symbolsUsed": len(frames),
+            "symbolsSkipped": skipped,
+        })
+        return result
+
+    def research_universe_factor(
+        self,
+        *,
+        user_id: int,
+        universe_id: int,
+        frequency: str,
+        start_date: datetime,
+        end_date: datetime,
+        factor_id: str,
+        factor_params: dict[str, Any] | None = None,
+        groups: int = 5,
+        holding_period: int = 5,
+        commission: float = 0.0005,
+        slippage: float = 0.0005,
+        neutralize_industry: bool = False,
+    ) -> dict[str, Any]:
+        normalized_frequency = normalize_frequency(frequency)
+        if normalized_frequency not in SUPPORTED_SUBSCRIPTION_FREQUENCIES:
+            raise StrategyV2ContractError(
+                f"strategyV2.unsupportedFrequency:{normalized_frequency}"
+            )
+
+        universe = self.universe_service.get_universe(user_id, int(universe_id))
+        validate_universe_history(universe, start_date)
+        candidates = self.universe_service.candidate_members(
+            user_id,
+            int(universe_id),
+            start=start_date.date(),
+            end=end_date.date(),
+        )
+        limit = max(1, int(os.getenv("STRATEGY_V2_MAX_SYMBOLS", "600") or 600))
+        if len(candidates) > limit:
+            raise StrategyV2ContractError("strategyV2.universeTooLarge")
+        candidates = [{**item, "key": _member_key(item)} for item in candidates]
+        _attach_catalog_products(candidates)
+
+        minimum_symbols = 3
+        if len(candidates) < minimum_symbols:
+            raise StrategyV2ContractError(
+                f"strategyV2.factorResearchUniverseTooSmall:{minimum_symbols}"
+            )
+        warmup_bars = max(
+            40,
+            FactorResearchEngine.warmup_bars(factor_id, factor_params),
+        )
+        fetch_start = start_date - timedelta(
+            days=_warmup_calendar_days(normalized_frequency, warmup_bars, candidates)
+        )
+        _enforce_backtest_range(
+            candidates=candidates,
+            timeframe=normalized_frequency,
+            start_date=start_date,
+            end_date=end_date,
+            warmup_bars=warmup_bars,
+            fetch_start=fetch_start,
+        )
+        frames, skipped = self.fetch_frames(
+            candidates,
+            normalized_frequency,
+            fetch_start,
+            end_date,
+        )
+        if not frames:
+            raise StrategyV2ContractError("strategyV2.noMarketData")
+        if len(frames) < minimum_symbols:
+            raise StrategyV2ContractError(
+                f"strategyV2.factorResearchUsableUniverseTooSmall:{minimum_symbols}"
+            )
+        if FactorResearchEngine.required_fields(factor_id):
+            enricher = self.fundamental_enricher or get_fundamental_data_service().enrich_panel
+            frames = enricher(frames, candidates)
+
+        markets = sorted({str(item.get("market") or "") for item in candidates if item.get("market")})
+        universe_metadata = {
+            "id": int(universe_id),
+            "code": str(universe.get("code") or ""),
+            "name": str(universe.get("name") or ""),
+            "nameI18nKey": str(universe.get("name_i18n_key") or ""),
+            "market": str(universe.get("market") or ""),
+            "memberCount": len(candidates),
+            "historyFrom": universe.get("history_from"),
+        }
+        manifest = {
+            "strategyType": "factor_research",
+            "primaryFrequency": normalized_frequency,
+            "drivingFrequency": normalized_frequency,
+            "frequencies": [normalized_frequency],
+            "markets": markets,
+            "universe": {
+                "kind": "managed",
+                "reference": f"UNIVERSE:{universe.get('code') or universe_id}",
+                "instruments": [],
+            },
+        }
+        result = FactorResearchEngine().run(
+            frames=frames,
+            factor_id=factor_id,
+            factor_params=factor_params,
+            start_date=start_date,
+            end_date=end_date,
+            groups=groups,
+            holding_period=holding_period,
+            commission=commission,
+            slippage=slippage,
+            neutralize_industry=neutralize_industry,
+            members=candidates,
+            annualization_periods=periods_per_year(normalized_frequency, set(markets)),
+        )
+        result.update({
+            "researchMode": "universe",
+            "manifest": manifest,
+            "universeId": int(universe_id),
+            "universe": universe_metadata,
+            "frequency": normalized_frequency,
             "symbolsRequested": len(candidates),
             "symbolsUsed": len(frames),
             "symbolsSkipped": skipped,

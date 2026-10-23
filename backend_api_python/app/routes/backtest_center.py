@@ -341,9 +341,6 @@ def run_strategy_backtest():
 def run_factor_research():
     try:
         payload = request.get_json(silent=True) or {}
-        code, source_id, _strategy_id, source_name = _source(payload, int(g.user_id))
-        if not source_id:
-            raise ValueError("strategyV2.sourceContractRequired")
         start_raw = str(payload.get("startDate") or "").strip()
         end_raw = str(payload.get("endDate") or "").strip()
         if not start_raw or not end_raw:
@@ -355,24 +352,51 @@ def run_factor_research():
         commission = parse_rate(payload.get("commission"), default=default_commission_if_missing(None))
         slippage = parse_rate(payload.get("slippage"), default=default_slippage_if_missing(None))
         neutralize_industry = bool(payload.get("neutralizeIndustry", False))
-        result = get_strategy_backtest_service().research_factor(
-            user_id=int(g.user_id),
-            code=code,
-            start_date=datetime.strptime(start_raw, "%Y-%m-%d"),
-            end_date=datetime.strptime(end_raw, "%Y-%m-%d").replace(hour=23, minute=59, second=59),
-            factor_id=factor_id,
-            factor_params=factor_params,
-            groups=groups,
-            holding_period=holding_period,
-            commission=commission,
-            slippage=slippage,
-            neutralize_industry=neutralize_industry,
-        )
+        universe_id = _positive_int(payload.get("universeId"))
+        source_id = None
+        source_name = ""
+        code = ""
+        if universe_id:
+            result = get_strategy_backtest_service().research_universe_factor(
+                user_id=int(g.user_id),
+                universe_id=universe_id,
+                frequency=str(payload.get("frequency") or "1d"),
+                start_date=datetime.strptime(start_raw, "%Y-%m-%d"),
+                end_date=datetime.strptime(end_raw, "%Y-%m-%d").replace(hour=23, minute=59, second=59),
+                factor_id=factor_id,
+                factor_params=factor_params,
+                groups=groups,
+                holding_period=holding_period,
+                commission=commission,
+                slippage=slippage,
+                neutralize_industry=neutralize_industry,
+            )
+        else:
+            code, source_id, _strategy_id, source_name = _source(payload, int(g.user_id))
+            if not source_id:
+                raise ValueError("strategyV2.sourceContractRequired")
+            result = get_strategy_backtest_service().research_factor(
+                user_id=int(g.user_id),
+                code=code,
+                start_date=datetime.strptime(start_raw, "%Y-%m-%d"),
+                end_date=datetime.strptime(end_raw, "%Y-%m-%d").replace(hour=23, minute=59, second=59),
+                factor_id=factor_id,
+                factor_params=factor_params,
+                groups=groups,
+                holding_period=holding_period,
+                commission=commission,
+                slippage=slippage,
+                neutralize_industry=neutralize_industry,
+            )
         manifest = dict(result.get("manifest") or {})
+        universe = dict(result.get("universe") or {})
         run_id = get_factor_research_repository().persist_run(
             user_id=int(g.user_id),
             source_id=source_id,
             source_name=source_name,
+            universe_id=universe_id,
+            universe_name=str(universe.get("name") or universe.get("code") or ""),
+            research_mode="universe" if universe_id else "strategy",
             market=",".join(manifest.get("markets") or []),
             timeframe=str(
                 manifest.get("drivingFrequency")

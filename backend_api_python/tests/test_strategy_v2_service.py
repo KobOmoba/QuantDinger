@@ -627,6 +627,58 @@ def handle_data(context, data):
         )
 
 
+def test_universe_factor_research_does_not_compile_or_execute_strategy_code():
+    symbols = ["A", "B", "C", "D", "E", "F"]
+
+    class ResearchUniverse:
+        @staticmethod
+        def get_universe(_user_id, universe_id):
+            assert universe_id == 17
+            return {
+                "id": 17,
+                "code": "research-pool",
+                "name": "Research Pool",
+                "market": "USStock",
+                "member_count": len(symbols),
+                "history_from": "2020-01-01",
+            }
+
+        @staticmethod
+        def candidate_members(_user_id, universe_id, *, start, end):
+            assert universe_id == 17
+            assert start <= end
+            return [{"market": "USStock", "symbol": symbol} for symbol in symbols]
+
+    index = pd.bdate_range("2025-01-01", periods=120)
+
+    def frame_fetcher(_market, symbol, *_args, **_kwargs):
+        offset = symbols.index(symbol)
+        prices = [100 + offset + day * (0.15 + offset * 0.03) for day in range(len(index))]
+        return pd.DataFrame({"open": prices, "close": prices}, index=index)
+
+    service = StrategyV2BacktestService(
+        repository=_Repository(),
+        universe_service=ResearchUniverse(),
+        frame_fetcher=frame_fetcher,
+    )
+    result = service.research_universe_factor(
+        user_id=1,
+        universe_id=17,
+        frequency="1d",
+        start_date=datetime(2025, 2, 10),
+        end_date=datetime(2025, 5, 30, 23, 59),
+        factor_id="momentum_20",
+        groups=3,
+        holding_period=5,
+    )
+
+    assert result["researchMode"] == "universe"
+    assert result["universeId"] == 17
+    assert result["frequency"] == "1d"
+    assert result["symbolsRequested"] == len(symbols)
+    assert result["manifest"]["strategyType"] == "factor_research"
+
+
 def test_factor_research_rejects_portfolios_smaller_than_group_count():
     code = """
 def initialize(context):

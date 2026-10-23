@@ -650,7 +650,7 @@ class FactorResearchRepository:
         self,
         *,
         user_id: int,
-        source_id: int,
+        source_id: int | None,
         source_name: str,
         market: str,
         timeframe: str,
@@ -665,26 +665,32 @@ class FactorResearchRepository:
         manifest: dict[str, Any],
         result: dict[str, Any],
         code: str,
+        universe_id: int | None = None,
+        universe_name: str = "",
+        research_mode: str = "strategy",
     ) -> int | None:
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
                 """
                 INSERT INTO qd_factor_research_runs
-                (user_id, source_id, source_name, market, timeframe, start_date, end_date,
+                (user_id, source_id, source_name, universe_id, universe_name, research_mode,
+                 market, timeframe, start_date, end_date,
                  factor_id, groups_count, holding_period, commission, slippage,
                  neutralize_industry, universe_size, manifest_json, code_hash, result_json,
                  rank_ic, icir, coverage, net_long_short_return, observation_count,
                  summary_backfilled, status, error_message, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 'success', '', NOW())
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE, 'success', '', NOW())
                 """,
                 (
-                    int(user_id), int(source_id), str(source_name or ""), str(market or ""),
+                    int(user_id), int(source_id) if source_id else None, str(source_name or ""),
+                    int(universe_id) if universe_id else None, str(universe_name or ""),
+                    str(research_mode or "strategy"), str(market or ""),
                     str(timeframe or ""), str(start_date), str(end_date), str(factor_id or ""),
                     int(groups), int(holding_period), float(commission), float(slippage),
                     bool(neutralize_industry), int(result.get("symbolsUsed") or 0),
                     json.dumps(manifest, ensure_ascii=False),
-                    strategy_source_code_hash(code),
+                    strategy_source_code_hash(code) if code else "",
                     json.dumps(result, ensure_ascii=False),
                     _nullable_number(result.get("rankIc")),
                     _nullable_number(result.get("icir")),
@@ -715,7 +721,8 @@ class FactorResearchRepository:
             cur = db.cursor()
             cur.execute(
                 f"""
-                SELECT id, user_id, source_id, source_name, market, timeframe, start_date,
+                SELECT id, user_id, source_id, source_name, universe_id, universe_name,
+                       research_mode, market, timeframe, start_date,
                        end_date, factor_id, groups_count, holding_period, commission, slippage,
                        neutralize_industry, universe_size, manifest_json, code_hash,
                        rank_ic, icir, coverage, net_long_short_return, observation_count,
@@ -736,7 +743,8 @@ class FactorResearchRepository:
             cur = db.cursor()
             cur.execute(
                 """
-                SELECT id, user_id, source_id, source_name, market, timeframe, start_date,
+                SELECT id, user_id, source_id, source_name, universe_id, universe_name,
+                       research_mode, market, timeframe, start_date,
                        end_date, factor_id, groups_count, holding_period, commission, slippage,
                        neutralize_industry, universe_size, manifest_json, code_hash, result_json,
                        status, created_at

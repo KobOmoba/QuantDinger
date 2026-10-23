@@ -1865,8 +1865,11 @@ CREATE INDEX IF NOT EXISTS idx_backtest_equity_points_run_id ON qd_backtest_equi
 CREATE TABLE IF NOT EXISTS qd_factor_research_runs (
     id SERIAL PRIMARY KEY,
     user_id INTEGER NOT NULL DEFAULT 1 REFERENCES qd_users(id) ON DELETE CASCADE,
-    source_id INTEGER NOT NULL,
+    source_id INTEGER,
     source_name VARCHAR(255) DEFAULT '',
+    universe_id INTEGER,
+    universe_name VARCHAR(255) DEFAULT '',
+    research_mode VARCHAR(20) NOT NULL DEFAULT 'strategy',
     market VARCHAR(100) DEFAULT '',
     timeframe VARCHAR(10) DEFAULT '',
     start_date VARCHAR(20) NOT NULL DEFAULT '',
@@ -1898,6 +1901,10 @@ ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS coverage DOUBLE PRE
 ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS net_long_short_return DOUBLE PRECISION;
 ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS observation_count INTEGER;
 ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS summary_backfilled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE qd_factor_research_runs ALTER COLUMN source_id DROP NOT NULL;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS universe_id INTEGER;
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS universe_name VARCHAR(255) DEFAULT '';
+ALTER TABLE qd_factor_research_runs ADD COLUMN IF NOT EXISTS research_mode VARCHAR(20) NOT NULL DEFAULT 'strategy';
 
 DO $$
 DECLARE
@@ -1929,6 +1936,8 @@ CREATE INDEX IF NOT EXISTS idx_factor_research_runs_source_id
   ON qd_factor_research_runs(source_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_factor_research_runs_user_source_recent
   ON qd_factor_research_runs(user_id, source_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_factor_research_runs_user_universe_recent
+  ON qd_factor_research_runs(user_id, universe_id, id DESC);
 
 -- =============================================================================
 -- 13. Exchange Credentials

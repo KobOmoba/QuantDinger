@@ -70,6 +70,55 @@ def test_factor_research_forwards_factor_parameters_to_execution_and_storage(app
     assert captured["storage"]["result"]["factorParams"] == payload["factorParams"]
 
 
+def test_factor_research_uses_universe_without_loading_strategy_source(app, monkeypatch):
+    captured = {}
+
+    class BacktestService:
+        @staticmethod
+        def research_universe_factor(**kwargs):
+            captured["execution"] = kwargs
+            return {
+                "manifest": {"markets": ["USStock"], "primaryFrequency": "1d"},
+                "universe": {"name": "NASDAQ 100"},
+                "universeId": kwargs["universe_id"],
+                "frequency": kwargs["frequency"],
+            }
+
+    class ResearchRepository:
+        @staticmethod
+        def persist_run(**kwargs):
+            captured["storage"] = kwargs
+            return 42
+
+    monkeypatch.setattr(backtest_center, "get_strategy_backtest_service", lambda: BacktestService())
+    monkeypatch.setattr(backtest_center, "get_factor_research_repository", lambda: ResearchRepository())
+    monkeypatch.setattr(
+        backtest_center,
+        "_source",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("strategy source must not be loaded")),
+    )
+
+    with app.test_request_context("/api/backtest/factor-research", method="POST", json={
+        "universeId": 9,
+        "frequency": "1d",
+        "startDate": "2026-01-01",
+        "endDate": "2026-02-01",
+        "factorId": "momentum_20",
+    }):
+        g.user_id = 7
+        response = inspect.unwrap(backtest_center.run_factor_research)()
+
+    body = response.get_json()
+    assert body["code"] == 1, body
+    assert body["data"]["runId"] == 42
+    assert captured["execution"]["universe_id"] == 9
+    assert captured["execution"]["frequency"] == "1d"
+    assert captured["storage"]["source_id"] is None
+    assert captured["storage"]["universe_id"] == 9
+    assert captured["storage"]["universe_name"] == "NASDAQ 100"
+    assert captured["storage"]["research_mode"] == "universe"
+
+
 def test_human_backtest_submission_uses_persisted_async_job(app, monkeypatch):
     captured = {}
 
