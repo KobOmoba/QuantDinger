@@ -77,7 +77,7 @@ from app.services.quick_trade.transport import close_quick_trade_transport, open
 from app.services.quick_trade.order_safety import (
     matching_position_size as _matching_position_size,
     normalized_submission_quantity,
-    serialized_quick_trade_close,
+    serialized_quick_trade_close, serialized_quick_trade_order,
     verify_full_market_close,
 )
 from app.services.pending_orders.order_quantities import exchange_quantity_snapshot
@@ -184,10 +184,10 @@ def _record_quick_trade(
 
 
 # ---------- endpoints ----------
-
 @quick_trade_blp.route('/place-order', methods=['POST'])
 @login_required
 @quick_trade_blp.arguments(QuickTradeOrderRequestSchema, location="json")
+@serialized_quick_trade_order
 def place_order(body):
     """
     Place a quick market or limit order.
