@@ -56,6 +56,7 @@ from app.services.quick_trade.orders import (
 from app.services.quick_trade.symbols import is_supported_crypto_exchange, symbols_match as quick_trade_symbols_match
 from app.services.quick_trade.history import parse_quick_trade_metadata, history_order_status
 from app.services.quick_trade.fee_reconciliation import fee_update_from_fill, reconcile_quick_trade_fees
+from app.services.quick_trade.order_reconciliation import reconcile_quick_trade_orders
 from app.services.quick_trade.products import (
     build_product_aware_config as _build_product_aware_config,
 )
@@ -103,6 +104,45 @@ def _reject_quick_trade_if_desktop_broker(exchange_id: str):
             }
         ), 400
     return None
+
+
+def _configure_quick_trade_derivatives(
+    client: Any,
+    *,
+    user_id: int,
+    credential_id: int,
+    exchange_id: str,
+    symbol: str,
+    leverage: float,
+    margin_mode: str,
+) -> Dict[str, Any]:
+    """Apply account settings once per requested configuration for a short TTL."""
+    from app.services.live_trading.account_configuration import configure_derivatives_account
+
+    return guarded_cached(
+        cache_key(
+            "quick_trade_derivatives_config",
+            user_id,
+            credential_id,
+            exchange_id,
+            symbol.upper(),
+            int(float(leverage or 1)),
+            margin_mode,
+        ),
+        lambda: configure_derivatives_account(
+            client,
+            exchange_id=exchange_id,
+            symbol=symbol,
+            leverage=leverage,
+            margin_mode=margin_mode,
+        ),
+        ttl_sec=60,
+        stale_ttl_sec=60,
+        timeout_sec=15.0,
+        namespace="quick_trade_derivatives_config",
+        max_concurrent=8,
+        cache_if=lambda value: isinstance(value, dict),
+    )
 
 
 def _record_quick_trade(
@@ -209,6 +249,7 @@ def place_order(body):
       source         (str)    - "ai_radar" / "ai_analysis" / "indicator" / "manual"
     """
     exchange_id = ""
+    request_started = time.monotonic()
     try:
         user_id = g.user_id
         credential_id = int(body.get("credential_id") or 0)
@@ -218,6 +259,8 @@ def place_order(body):
         usdt_amount = float(body.get("amount") or 0)
         requested_base_quantity = float(body.get("quantity") or 0)
         price = float(body.get("price") or 0)
+        reference_price = float(body.get("reference_price") or 0)
+        reference_price_at_ms = int(body.get("reference_price_at_ms") or 0)
         leverage = int(body.get("leverage") or 1)
         market_type = str(body.get("market_type") or "").strip().lower()
         tp_price = float(body.get("tp_price") or 0)
@@ -295,10 +338,10 @@ def place_order(body):
             }), 409
 
         if market_type == "swap":
-            from app.services.live_trading.account_configuration import configure_derivatives_account
-
-            configure_derivatives_account(
+            _configure_quick_trade_derivatives(
                 client,
+                user_id=user_id,
+                credential_id=credential_id,
                 exchange_id=exchange_id,
                 symbol=symbol,
                 leverage=leverage,
@@ -307,13 +350,17 @@ def place_order(body):
 
         # Spot orders may use quote notional or base quantity.
         # Swap input is margin and expands by leverage.
-        limit_price_for_conversion = price if order_type == "limit" and price > 0 else 0.0
+        conversion_price = price if order_type == "limit" and price > 0 else 0.0
+        if order_type == "market" and reference_price > 0 and reference_price_at_ms > 0:
+            reference_age_ms = abs(int(time.time() * 1000) - reference_price_at_ms)
+            if reference_age_ms <= 30_000:
+                conversion_price = reference_price
         base_qty = requested_base_quantity if uses_base_quantity else _convert_usdt_to_base_qty(
             client,
             symbol,
             order_notional_usdt,
             market_type,
-            limit_price_for_conversion,
+            conversion_price,
         )
 
         quote_for_buy = 0.0
@@ -398,43 +445,6 @@ def place_order(body):
             )
             logger.error(f"This suggests the price fetch failed. Order may fail due to insufficient margin.")
 
-        # ---- swap margin pre-check ----
-        # 50 USDT notional at leverage=1 needs ~50 USDT collateral. Many users
-        # only see the i18n hint after the exchange rejects the order. Compute
-        # the rough margin requirement up-front so we can short-circuit with
-        # an actionable message that includes account/balance numbers.
-        if market_type != "spot" and order_type == "market":
-            try:
-                ref_price = price if price > 0 else 0.0
-                if ref_price <= 0 and order_notional_usdt > 0 and base_qty > 0:
-                    ref_price = float(order_notional_usdt) / float(base_qty)
-                notional_usdt = float(base_qty or 0) * float(ref_price or 0)
-                if notional_usdt <= 0:
-                    notional_usdt = float(order_notional_usdt or 0)
-                lev = max(int(leverage or 1), 1)
-                # Add a small safety buffer (taker fee + funding accrual + slippage)
-                est_margin = (notional_usdt / lev) * 1.05
-                bal = fetch_balance_raw(
-                    client,
-                    exchange_id=exchange_id,
-                    market_type="swap",
-                    exchange_config=exchange_config,
-                )
-                avail = float(bal.get("available") or 0)
-                if avail > 0 and est_margin > avail:
-                    return jsonify({
-                        "code": 0,
-                        "msg": (
-                            f"Insufficient derivatives margin: {notional_usdt:.2f} USDT notional "
-                            f"at {lev}x needs about {est_margin:.2f} USDT margin, "
-                            f"but only {avail:.2f} USDT is available. "
-                            "Reduce order size, adjust leverage, or transfer funds."
-                        ),
-                        "error_hint": "quickTrade.errorHints.insufficientBalance",
-                    }), 400
-            except Exception as pe:
-                logger.warning("swap margin pre-check skipped: %s", pe)
-
         executable_base_qty, quantity_snapshot = normalized_submission_quantity(
             client,
             exchange_id=exchange_id,
@@ -482,6 +492,11 @@ def place_order(body):
                 quote_amount=quote_for_buy,
                 spot_buy_by_quantity=bool(side == "buy" and uses_base_quantity),
             )
+            logger.info(
+                "Quick Trade order acknowledged exchange=%s elapsed_ms=%.1f",
+                exchange_id,
+                (time.monotonic() - request_started) * 1000,
+            )
         else:
             # Limit orders: use direct client call (execution.py doesn't handle limit orders)
             result = client.place_limit_order(
@@ -505,7 +520,9 @@ def place_order(body):
         commission_quote = None
         exchange_status = ""
         enrich = {"fee_status": "pending", "fees_by_ccy": {}}
-        if exchange_order_id:
+        if exchange_order_id and (
+            order_type == "limit" or tp_price > 0 or sl_price > 0
+        ):
             enrich = enrich_fill(
                 client,
                 order_id=exchange_order_id,
@@ -712,6 +729,10 @@ def get_balance():
             "api_family": request.args.get("api_family", "").strip(),
             "resolve_product": request.args.get("resolve_product", "").strip(),
         }
+        requested_leverage = max(1, request.args.get("leverage", default=1, type=int) or 1)
+        requested_margin_mode = request.args.get("margin_mode", "cross").strip().lower()
+        if requested_margin_mode not in ("cross", "isolated"):
+            requested_margin_mode = "cross"
 
         def _compute_balance() -> Dict[str, Any]:
             swap_bal = empty_balance_dict()
@@ -737,6 +758,39 @@ def get_balance():
                         market_type=mt,
                         exchange_config=cfg,
                     )
+                    if mt == market_type:
+                        if mt == "swap" and product_args["symbol"]:
+                            try:
+                                _configure_quick_trade_derivatives(
+                                    client,
+                                    user_id=user_id,
+                                    credential_id=credential_id,
+                                    exchange_id=exchange_id,
+                                    symbol=product_args["symbol"],
+                                    leverage=requested_leverage,
+                                    margin_mode=requested_margin_mode,
+                                )
+                            except Exception as config_error:
+                                logger.info(
+                                    "Quick Trade account warmup skipped for %s: %s",
+                                    exchange_id,
+                                    config_error,
+                                )
+                        from app.services.live_trading.ws_order_transport import (
+                            warm_websocket_order_client,
+                        )
+
+                        prepare_ws_order_entry = getattr(client, "prepare_ws_order_entry", None)
+                        if callable(prepare_ws_order_entry) and product_args["symbol"]:
+                            prepare_ws_order_entry(
+                                symbol=product_args["symbol"],
+                                market_type=mt,
+                            )
+                        warm_websocket_order_client(
+                            client,
+                            exchange_id=exchange_id,
+                            market_type=mt,
+                        )
                     if mt == "spot":
                         spot_bal = parsed
                     else:
@@ -789,6 +843,8 @@ def get_balance():
                 product_args["instrument_id"],
                 product_args["product_type"],
                 product_args["api_family"],
+                requested_leverage,
+                requested_margin_mode,
             ),
             _compute_balance,
             ttl_sec=8,
@@ -1179,6 +1235,7 @@ def close_position(body):
       position_side  (str)    - optional "long" / "short"; required when both directions exist for the same symbol
       source         (str)    - "ai_radar" / "ai_analysis" / "indicator" / "manual"
     """
+    request_started = time.monotonic()
     try:
         user_id = g.user_id
         credential_id = int(body.get("credential_id") or 0)
@@ -1223,23 +1280,44 @@ def close_position(body):
             return qt_rej
 
         client = create_exchange_client(exchange_config, market_type=market_type)
-        
-        # ---- get current position ----
-        positions = []
-        try:
-            raw = _fetch_exchange_positions_raw(
-                client, exchange_config, symbol=symbol, market_type=market_type
-            )
-            positions = _parse_positions(raw)
-        except Exception as pe:
-            logger.warning(f"Position fetch failed: {pe}")
-        
-        if not positions:
-            return jsonify({"code": 0, "msg": f"No position found for {symbol}"}), 404
 
         want_side = str(body.get("position_side") or body.get("close_side") or "").strip().lower()
         if want_side not in ("", "long", "short"):
             want_side = ""
+
+        fast_market_close = (
+            market_type == "swap"
+            and order_type == "market"
+            and close_scope == "full"
+            and close_size > 0
+            and want_side in ("long", "short")
+        )
+
+        # The UI already holds an exchange position snapshot. A reduce-only market
+        # order can safely use it without blocking on another position REST call.
+        if fast_market_close:
+            positions = [
+                {
+                    "symbol": symbol,
+                    "side": want_side,
+                    "size": close_size,
+                    "entry_price": 0.0,
+                    "mark_price": 0.0,
+                    "leverage": 1.0,
+                }
+            ]
+        else:
+            positions = []
+            try:
+                raw = _fetch_exchange_positions_raw(
+                    client, exchange_config, symbol=symbol, market_type=market_type
+                )
+                positions = _parse_positions(raw)
+            except Exception as pe:
+                logger.warning(f"Position fetch failed: {pe}")
+
+            if not positions:
+                return jsonify({"code": 0, "msg": f"No position found for {symbol}"}), 404
 
         matches: list = []
         for pos in positions:
@@ -1344,6 +1422,12 @@ def close_position(body):
             source="quick_trade_close_submission",
             snapshotter=exchange_quantity_snapshot,
         )
+        logger.info(
+            "Quick Trade close prepared exchange=%s fast=%s elapsed_ms=%.1f",
+            exchange_id,
+            fast_market_close,
+            (time.monotonic() - request_started) * 1000,
+        )
         
         # ---- determine signal type based on position side ----
         if market_type == "spot":
@@ -1388,6 +1472,12 @@ def close_position(body):
             )
         else:
             result = place_order_from_signal(**order_args)
+        logger.info(
+            "Quick Trade close acknowledged exchange=%s fast=%s elapsed_ms=%.1f",
+            exchange_id,
+            fast_market_close,
+            (time.monotonic() - request_started) * 1000,
+        )
         
         # ---- extract result ----
         exchange_order_id = str(getattr(result, "exchange_order_id", "") or "")
@@ -1401,7 +1491,7 @@ def close_position(body):
         commission_quote = None
         exchange_status = ""
         enrich = {"fee_status": "pending", "fees_by_ccy": {}}
-        if exchange_order_id:
+        if exchange_order_id and not fast_market_close:
             enrich = enrich_fill(
                 client,
                 order_id=exchange_order_id,
@@ -1445,6 +1535,7 @@ def close_position(body):
         if (
             order_type == "market"
             and close_scope == "full"
+            and not fast_market_close
         ):
             try:
                 verification = verify_full_market_close(
@@ -1804,6 +1895,13 @@ def get_history():
             rows = cur.fetchall() or []
             cur.close()
 
+        reconcile_quick_trade_orders(
+            rows,
+            user_id=user_id,
+            credential_id=credential_id,
+            symbol=symbol,
+            market_type=market_type,
+        )
         reconcile_quick_trade_fees(
             rows,
             user_id=user_id,
@@ -1851,7 +1949,12 @@ def get_history():
 @login_required
 def get_position_history():
     from app.services.quick_trade.position_activity import (
+        binance_position_history,
+        bitget_position_history,
+        bybit_position_history,
         gate_position_history,
+        htx_position_history,
+        okx_position_history,
         quick_trade_position_history,
     )
     credential_id = request.args.get("credential_id", type=int) or 0
@@ -1871,6 +1974,16 @@ def get_position_history():
         )
         client = create_exchange_client(config, market_type=market_type)
         data = gate_position_history(client, symbol)
+        if not data.get("supported"):
+            data = bitget_position_history(client, symbol)
+        if not data.get("supported"):
+            data = okx_position_history(client, symbol)
+        if not data.get("supported"):
+            data = binance_position_history(client, symbol)
+        if not data.get("supported"):
+            data = bybit_position_history(client, symbol)
+        if not data.get("supported"):
+            data = htx_position_history(client, symbol)
         if not data.get("supported"):
             with get_db_connection() as db:
                 cur = db.cursor()

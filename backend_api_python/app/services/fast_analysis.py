@@ -1060,7 +1060,10 @@ class FastAnalysisService(FastAnalysisScoringMixin):
                     from app.services.analysis_memory import get_analysis_memory
                     raw_conf = int(analysis.get("confidence", 50) or 50)
                     analysis["confidence"] = get_analysis_memory().get_adjusted_confidence(
-                        raw_conf, market=market, symbol=symbol
+                        raw_conf,
+                        user_id=int(user_id),
+                        market=market,
+                        symbol=symbol,
                     )
                 except Exception as e:
                     logger.debug(f"Confidence calibration skipped: {e}")

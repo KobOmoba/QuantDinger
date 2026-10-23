@@ -171,7 +171,9 @@ class BitgetCompatibleMixClient(_BitgetAutoRouter, BitgetMixClient):
     _ROUTED_METHODS = frozenset(
         {
             "get_funding_payments",
+            "get_contract",
             "get_account_pos_mode",
+            "prepare_ws_order_entry",
             "normalize_base_order_size",
             "get_accounts",
             "get_positions",

@@ -157,6 +157,11 @@ support responsible disclosure.
   responsibly disclosed two backend security issues resolved in September
   2026. Their clear reports and coordinated-disclosure approach helped us
   validate and remediate both issues safely.
+- **Nikhil Agrawal of Mettle Labs** — responsibly disclosed multiple
+  authenticated authorization issues affecting indicator metadata, analysis
+  performance statistics, and strategy runtime-state isolation in October
+  2026. We appreciate the clear reproductions, remediation guidance, and
+  coordinated-disclosure approach.
 
 ---
 

@@ -529,7 +529,12 @@ def get_performance():
         days = int(request.args.get('days', 30))
         
         memory = get_analysis_memory()
-        stats = memory.get_performance_stats(market, symbol, days)
+        stats = memory.get_performance_stats(
+            user_id=int(g.user_id),
+            market=market,
+            symbol=symbol,
+            days=days,
+        )
         
         return jsonify({
             'code': 1,

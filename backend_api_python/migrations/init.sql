@@ -1966,7 +1966,8 @@ CREATE TABLE IF NOT EXISTS qd_manual_positions (
     group_name VARCHAR(100) DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
-    UNIQUE(user_id, market, symbol, side, group_name)
+    UNIQUE(user_id, market, symbol, side, group_name),
+    CONSTRAINT uq_manual_positions_id_user UNIQUE(id, user_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_manual_positions_user_id ON qd_manual_positions(user_id);
@@ -1991,7 +1992,11 @@ CREATE TABLE IF NOT EXISTS qd_position_alerts (
     repeat_interval INTEGER DEFAULT 0,
     notes TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT fk_position_alerts_owned_position
+        FOREIGN KEY (position_id, user_id)
+        REFERENCES qd_manual_positions(id, user_id)
+        ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_position_alerts_user_id ON qd_position_alerts(user_id);
@@ -2336,6 +2341,7 @@ CREATE INDEX IF NOT EXISTS idx_analysis_memory_symbol ON qd_analysis_memory(mark
 CREATE INDEX IF NOT EXISTS idx_analysis_memory_created ON qd_analysis_memory(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_analysis_memory_validated ON qd_analysis_memory(validated_at) WHERE validated_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_analysis_memory_user ON qd_analysis_memory(user_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_memory_user_created ON qd_analysis_memory(user_id, created_at DESC);
 
 -- Migration: Add user_id column to existing qd_analysis_memory table
 DO $$
