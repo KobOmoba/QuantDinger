@@ -952,11 +952,14 @@ class OkxClient(BaseRestClient):
             if mt == "spot" or not reduce_only or "51169" not in str(exc):
                 raise
             self._acct_cfg_cache.pop("account_config", None)
-            with self._account_config_cache_lock:
-                self._account_config_cache.pop(
-                    (self.base_url, self.api_key, self.simulated_trading),
-                    None,
-                )
+            base_url = getattr(self, "base_url", "")
+            api_key = getattr(self, "api_key", "")
+            if base_url and api_key:
+                with self._account_config_cache_lock:
+                    self._account_config_cache.pop(
+                        (base_url, api_key, bool(getattr(self, "simulated_trading", False))),
+                        None,
+                    )
             refreshed_ps = self._resolve_pos_side(
                 requested_pos_side=pos_side,
                 market_type=mt,

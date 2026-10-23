@@ -57,6 +57,7 @@ from app.services.quick_trade.symbols import is_supported_crypto_exchange, symbo
 from app.services.quick_trade.history import parse_quick_trade_metadata, history_order_status
 from app.services.quick_trade.fee_reconciliation import fee_update_from_fill, reconcile_quick_trade_fees
 from app.services.quick_trade.order_reconciliation import reconcile_quick_trade_orders
+from app.services.quick_trade.account_warmup import configure_quick_trade_derivatives, warm_quick_trade_account
 from app.services.quick_trade.products import (
     build_product_aware_config as _build_product_aware_config,
 )
@@ -91,9 +92,6 @@ quick_trade_blp = Blueprint('quick_trade', __name__)
 quick_trade_blp.before_request(open_quick_trade_transport)
 quick_trade_blp.teardown_request(close_quick_trade_transport)
 
-# ---------- helpers ----------
-
-
 def _reject_quick_trade_if_desktop_broker(exchange_id: str):
     """Quick Trade is USDT-centric and only wired to crypto exchange clients."""
     if not is_supported_crypto_exchange(exchange_id):
@@ -104,45 +102,6 @@ def _reject_quick_trade_if_desktop_broker(exchange_id: str):
             }
         ), 400
     return None
-
-
-def _configure_quick_trade_derivatives(
-    client: Any,
-    *,
-    user_id: int,
-    credential_id: int,
-    exchange_id: str,
-    symbol: str,
-    leverage: float,
-    margin_mode: str,
-) -> Dict[str, Any]:
-    """Apply account settings once per requested configuration for a short TTL."""
-    from app.services.live_trading.account_configuration import configure_derivatives_account
-
-    return guarded_cached(
-        cache_key(
-            "quick_trade_derivatives_config",
-            user_id,
-            credential_id,
-            exchange_id,
-            symbol.upper(),
-            int(float(leverage or 1)),
-            margin_mode,
-        ),
-        lambda: configure_derivatives_account(
-            client,
-            exchange_id=exchange_id,
-            symbol=symbol,
-            leverage=leverage,
-            margin_mode=margin_mode,
-        ),
-        ttl_sec=60,
-        stale_ttl_sec=60,
-        timeout_sec=15.0,
-        namespace="quick_trade_derivatives_config",
-        max_concurrent=8,
-        cache_if=lambda value: isinstance(value, dict),
-    )
 
 
 def _record_quick_trade(
@@ -338,7 +297,7 @@ def place_order(body):
             }), 409
 
         if market_type == "swap":
-            _configure_quick_trade_derivatives(
+            configure_quick_trade_derivatives(
                 client,
                 user_id=user_id,
                 credential_id=credential_id,
@@ -759,37 +718,15 @@ def get_balance():
                         exchange_config=cfg,
                     )
                     if mt == market_type:
-                        if mt == "swap" and product_args["symbol"]:
-                            try:
-                                _configure_quick_trade_derivatives(
-                                    client,
-                                    user_id=user_id,
-                                    credential_id=credential_id,
-                                    exchange_id=exchange_id,
-                                    symbol=product_args["symbol"],
-                                    leverage=requested_leverage,
-                                    margin_mode=requested_margin_mode,
-                                )
-                            except Exception as config_error:
-                                logger.info(
-                                    "Quick Trade account warmup skipped for %s: %s",
-                                    exchange_id,
-                                    config_error,
-                                )
-                        from app.services.live_trading.ws_order_transport import (
-                            warm_websocket_order_client,
-                        )
-
-                        prepare_ws_order_entry = getattr(client, "prepare_ws_order_entry", None)
-                        if callable(prepare_ws_order_entry) and product_args["symbol"]:
-                            prepare_ws_order_entry(
-                                symbol=product_args["symbol"],
-                                market_type=mt,
-                            )
-                        warm_websocket_order_client(
+                        warm_quick_trade_account(
                             client,
+                            user_id=user_id,
+                            credential_id=credential_id,
                             exchange_id=exchange_id,
+                            symbol=product_args["symbol"],
                             market_type=mt,
+                            leverage=requested_leverage,
+                            margin_mode=requested_margin_mode,
                         )
                     if mt == "spot":
                         spot_bal = parsed
@@ -1948,15 +1885,7 @@ def get_history():
 @quick_trade_blp.route('/position-history', methods=['GET'])
 @login_required
 def get_position_history():
-    from app.services.quick_trade.position_activity import (
-        binance_position_history,
-        bitget_position_history,
-        bybit_position_history,
-        gate_position_history,
-        htx_position_history,
-        okx_position_history,
-        quick_trade_position_history,
-    )
+    from app.services.quick_trade.position_activity import exchange_position_history, quick_trade_position_history
     credential_id = request.args.get("credential_id", type=int) or 0
     symbol = str(request.args.get("symbol") or "").strip()
     market_type = str(request.args.get("market_type") or "swap")
@@ -1973,17 +1902,7 @@ def get_position_history():
             market_type=market_type,
         )
         client = create_exchange_client(config, market_type=market_type)
-        data = gate_position_history(client, symbol)
-        if not data.get("supported"):
-            data = bitget_position_history(client, symbol)
-        if not data.get("supported"):
-            data = okx_position_history(client, symbol)
-        if not data.get("supported"):
-            data = binance_position_history(client, symbol)
-        if not data.get("supported"):
-            data = bybit_position_history(client, symbol)
-        if not data.get("supported"):
-            data = htx_position_history(client, symbol)
+        data = exchange_position_history(client, symbol)
         if not data.get("supported"):
             with get_db_connection() as db:
                 cur = db.cursor()

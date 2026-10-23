@@ -400,6 +400,18 @@ components:
           type: string
           default: ''
           maxLength: 32
+        bitget_account_mode:
+          type: string
+          default: ''
+          enum:
+          - ''
+          - auto
+          - classic
+          - uta
+        bitgetAccountMode:
+          type: string
+          default: ''
+          maxLength: 32
         ibkr_host:
           type: string
           default: 127.0.0.1
@@ -504,6 +516,14 @@ components:
           type: number
           default: 0.0
           minimum: 0.0
+        reference_price:
+          type: number
+          default: 0.0
+          minimum: 0.0
+        reference_price_at_ms:
+          type: integer
+          default: 0
+          minimum: 0
         leverage:
           type: integer
           default: 1

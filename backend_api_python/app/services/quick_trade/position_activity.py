@@ -461,6 +461,23 @@ def bitget_position_history(client, symbol, limit=50):
     return {"supported": True, "positions": result[: max(1, int(limit or 50))]}
 
 
+def exchange_position_history(client, symbol, limit=50):
+    """Return the first supported native position history for an exchange client."""
+    readers = (
+        gate_position_history,
+        bitget_position_history,
+        okx_position_history,
+        binance_position_history,
+        bybit_position_history,
+        htx_position_history,
+    )
+    for reader in readers:
+        result = reader(client, symbol, limit=limit)
+        if result.get("supported"):
+            return result
+    return {"supported": False, "positions": []}
+
+
 def gate_native_protection_fills(client, symbol, limit=100):
     """Return filled Gate price orders created by exchange-native protection."""
     if not isinstance(client, GateUsdtFuturesClient):
