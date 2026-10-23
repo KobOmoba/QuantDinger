@@ -42,6 +42,7 @@ from app.services.strategy_runtime.timeframes import (
     equity_daily_frames_ready,
     live_history_days,
     load_live_frequency_frames,
+    live_ready_universe_symbols,
     seconds_until_next_completed_bar,
 )
 from app.services.strategy_v2 import (
@@ -750,9 +751,18 @@ class TradingExecutor:
                 validate_product_account_environment(candidates, exchange_config)
 
             frequency = program.manifest.driving_frequency
+            ready_universe_symbols: set[str] = set()
 
             def fetch_runtime_frames() -> dict[str, dict[str, pd.DataFrame]]:
-                refresh_members(service, candidates, program.manifest, user_id, strategy_id, datetime.now(timezone.utc), account_exchange)
+                refresh_members(
+                    service,
+                    candidates,
+                    program.manifest,
+                    user_id,
+                    strategy_id,
+                    datetime.now(timezone.utc),
+                    account_exchange,
+                )
                 _apply_market_data_defaults(candidates)
                 if execution_mode == "live" and account_exchange:
                     attach_instrument_product_contracts(
@@ -760,17 +770,40 @@ class TradingExecutor:
                         trading_config,
                         exchange_id=account_exchange,
                     )
-                return load_live_frequency_frames(
+                frame_end = datetime.now(timezone.utc)
+                bundles = load_live_frequency_frames(
                     service=service,
                     candidates=candidates,
                     manifest=program.manifest,
-                    end_date=datetime.now(timezone.utc),
+                    end_date=frame_end,
                     warn=lambda message: append_strategy_log(
                         strategy_id,
                         "warning",
                         message,
                     ),
                 )
+                ready, shortfalls = live_ready_universe_symbols(
+                    bundles,
+                    program.manifest,
+                    frame_end,
+                    candidates,
+                )
+                ready_universe_symbols.clear()
+                ready_universe_symbols.update(ready)
+                if shortfalls:
+                    details = ", ".join(
+                        f"{item['symbol']}@{item['frequency']}="
+                        f"{item['count']}/{item['required']}"
+                        for item in shortfalls[:5]
+                    )
+                    logger.warning(
+                        "Strategy %s excluded %s dynamic-universe instrument(s) "
+                        "without sufficient warmup data (%s)",
+                        strategy_id,
+                        len({item["symbol"] for item in shortfalls}),
+                        details,
+                    )
+                return bundles
 
             def resolve_universe(reference: str, timestamp: pd.Timestamp) -> list[str]:
                 del reference
@@ -786,7 +819,11 @@ class TradingExecutor:
                     for item in members:
                         if item.get("market") == "Crypto":
                             item["exchange_id"] = account_exchange
-                return [_member_key(item) for item in members]
+                return [
+                    key
+                    for item in members
+                    if (key := _member_key(item)) in ready_universe_symbols
+                ]
 
             frequency_frames = fetch_runtime_frames()
             frames = frequency_frames[frequency]
@@ -1002,7 +1039,8 @@ class TradingExecutor:
             append_strategy_log(
                 strategy_id,
                 "info",
-                f"Strategy runtime ready: instruments={len(candidates)}, timeframe={frequency}, "
+                f"Strategy runtime ready: instruments={len(ready_universe_symbols)}, "
+                f"timeframe={frequency}, "
                 f"mode={execution_mode}, trigger={'bar_close_event' if event_driven_bars else 'runtime_poll'}",
             )
 
