@@ -782,7 +782,9 @@ class MultiAssetSimulationBroker:
                 else open_price
             )
             target_qty = self._target_quantity(order, current, sizing_price, equity)
-            target_weights[position_key] = target_qty * sizing_price / equity if equity else 0.0
+            target_weight = target_qty * sizing_price / equity if equity else 0.0
+            if abs(target_weight) > 1e-12 or abs(current.amount) > 1e-12:
+                target_weights[position_key] = target_weight
             delta = target_qty - current.amount
             direction = 1 if delta > 0 else -1 if delta < 0 else 0
             if order.pending_direction and direction != order.pending_direction:

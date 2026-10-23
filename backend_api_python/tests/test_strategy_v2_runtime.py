@@ -714,6 +714,39 @@ def handle_data(context, data):
     assert result["winRate"] == 100.0
     assert result["profitFactor"] > 0
     assert result["avgTrade"] > 0
+    assert result["rebalanceRecords"][1]["targetWeights"] == {"USStock:AAPL": 0.0}
+
+
+def test_rebalance_records_omit_zero_targets_for_already_flat_symbols():
+    code = """
+def initialize(context):
+    context.set_universe(["USStock:AAPL", "USStock:MSFT"])
+    context.subscribe(frequency="1d")
+    g.sent = False
+
+def handle_data(context, data):
+    if not g.sent:
+        order_target_percent("AAPL", 0.5, reason="entry")
+        order_target_percent("MSFT", 0.0, reason="already_flat")
+        g.sent = True
+"""
+    result = StrategyV2BacktestRunner(
+        code=code,
+        frames={
+            "USStock:AAPL": _frame([100, 101, 102]),
+            "USStock:MSFT": _frame([200, 201, 202]),
+        },
+        initial_capital=10000,
+        commission=0,
+        slippage=0,
+    ).run()
+
+    assert result["rebalanceRecords"][0]["targetWeights"] == {"USStock:AAPL": 0.5}
+    assert any(
+        row["symbol"] == "USStock:MSFT"
+        and row["statusReason"] == "target_already_met"
+        for row in result["orderLedger"]
+    )
 
 
 def test_live_session_processes_each_closed_bar_once_and_preserves_state():
