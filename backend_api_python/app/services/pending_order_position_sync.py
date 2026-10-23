@@ -232,7 +232,7 @@ def _purge_flat_strategy_positions_from_exchange(
             "[PositionSync] Strategy %s skips flat-leg purge: snapshot served from cache.", sid
         )
         return 0
-    allowed = strategy_allowed_symbols(strategy_config or {})
+    allowed = strategy_allowed_symbols(strategy_config or {}, strategy_id=sid)
     if not allowed:
         return 0
 

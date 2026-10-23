@@ -84,7 +84,7 @@ from app.services.pending_orders.order_quantities import (
 )
 from app.services.pending_orders.broker_support import (
     broker_order_type as _broker_order_type,
-    broker_protection_prices as _broker_protection_prices,
+    broker_protection_prices as _broker_protection_prices, native_stock_protection_allowed as _stock_protection,
     redact_exchange_json as _redact_exchange_json,
 )
 from app.services.pending_orders.submission_recovery import SubmissionRecoveryMixin
@@ -2557,7 +2557,7 @@ class PendingOrderWorker(
             )
             if callable(prepare_submission):
                 prepare_submission()
-            if stop_price > 0 or take_price > 0:
+            if _stock_protection(payload, exchange_config, amount, stop_price, take_price):
                 result = client.place_bracket_order(
                     symbol=symbol,
                     side=action,
@@ -2754,7 +2754,7 @@ class PendingOrderWorker(
                 entry_price=protection_ref,
             )
             protection_kwargs = {}
-            if market_type_for_client == "USStock" and (stop_price > 0 or take_price > 0):
+            if market_type_for_client == "USStock" and _stock_protection(payload, exchange_config, amount, stop_price, take_price):
                 protection_kwargs = {
                     "stop_loss_price": stop_price,
                     "take_profit_price": take_price,

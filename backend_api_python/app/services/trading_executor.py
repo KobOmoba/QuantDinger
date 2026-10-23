@@ -307,6 +307,41 @@ class TradingExecutor:
             conflict = find_live_strategy_conflict(strategy, user_id)
             if conflict:
                 raise RuntimeError(live_conflict_message(conflict))
+            if exchange_id in {"alpaca", "ibkr"}:
+                from app.services.live_trading.factory import create_client
+
+                client = None
+                try:
+                    client = create_client(exchange_config, market_type=market_type)
+                    summary = (
+                        client.get_account_summary()
+                        if hasattr(client, "get_account_summary")
+                        else {}
+                    )
+                    if not isinstance(summary, dict) or summary.get("success") is False:
+                        raise RuntimeError("strategyV2.connectionFailed")
+                    if exchange_id == "alpaca" and any(
+                        bool(summary.get(field))
+                        for field in ("trading_blocked", "account_blocked")
+                    ):
+                        raise RuntimeError("strategyV2.connectionFailed")
+                    if exchange_id == "ibkr" and not str(
+                        summary.get("account") or ""
+                    ).strip():
+                        raise RuntimeError("strategyV2.connectionFailed")
+                except Exception as exc:
+                    if str(exc) == "strategyV2.connectionFailed":
+                        raise
+                    logger.warning(
+                        "Stock broker preflight failed for strategy %s: %s",
+                        strategy_id,
+                        exc,
+                    )
+                    raise RuntimeError("strategyV2.connectionFailed") from exc
+                finally:
+                    disconnect = getattr(client, "disconnect", None)
+                    if callable(disconnect):
+                        disconnect()
             return
 
         direction_mode = resolve_strategy_direction_mode(strategy)
@@ -1336,6 +1371,34 @@ class TradingExecutor:
                             if not initial_frames_pending or daily_policy:
                                 frequency_frames = fetch_runtime_frames()
                                 frames = frequency_frames[frequency]
+                            daily_members = [
+                                member
+                                for member in candidates
+                                if str(member.get("key") or "")
+                                in ready_universe_symbols
+                            ]
+                            if daily_policy:
+                                daily_prices = self._execution_account_prices(
+                                    pricing_members(
+                                        daily_members,
+                                        positions,
+                                        require_complete=True,
+                                    ),
+                                    exchange_config,
+                                    runtime_price_client,
+                                )
+                                daily_price_clock = time.monotonic()
+                                for symbol_key, value in daily_prices.items():
+                                    if float(value or 0.0) > 0:
+                                        last_prices[symbol_key] = float(value)
+                                        last_price_seen_at[symbol_key] = daily_price_clock
+                                active_prices = {
+                                    symbol_key: value
+                                    for symbol_key, value in last_prices.items()
+                                    if daily_price_clock
+                                    - last_price_seen_at.get(symbol_key, 0.0)
+                                    <= price_stale_after
+                                }
                             latest_frame_timestamp = _latest_frame_timestamp(frames)
                             frame_advanced = bool(
                                 initial_frames_pending
@@ -1350,12 +1413,17 @@ class TradingExecutor:
                                 frame_advanced = bool(
                                     frame_advanced
                                     and equity_daily_execution_session(*daily_policy) == signal_session
-                                    and equity_daily_frames_ready(frames, candidates, signal_session, daily_policy[0])
+                                    and equity_daily_frames_ready(
+                                        frames,
+                                        daily_members,
+                                        signal_session,
+                                        daily_policy[0],
+                                    )
                                     and all(
                                         str(member["key"]) in active_prices
                                         and time.monotonic() - last_price_seen_at.get(str(member["key"]), 0.0)
                                         <= price_stale_after
-                                        for member in candidates
+                                        for member in daily_members
                                     )
                                 )
                             if frame_advanced:
