@@ -33,6 +33,7 @@ from app.utils.logger import get_logger
 from .contract import StrategyV2ContractError, compile_strategy_v2
 from .factor_research import FactorResearchEngine
 from .frequencies import SUPPORTED_SUBSCRIPTION_FREQUENCIES, normalize_frequency, periods_per_year
+from .instruments import instrument_key_from_metadata
 from .models import InstrumentSpec, StrategyManifest
 from .market_data import load_strategy_frame
 from .runtime import StrategyV2BacktestRunner
@@ -1227,14 +1228,7 @@ def _resample_review_frame(
 
 
 def _member_key(member: dict[str, Any]) -> str:
-    item = InstrumentSpec(
-        market=str(member.get("market") or ""),
-        symbol=str(member.get("symbol") or ""),
-        exchange_id=str(member.get("exchange_id") or ""),
-        market_type=str(member.get("market_type") or ""),
-        instrument_id=str(member.get("instrument_id") or ""),
-    )
-    return item.key
+    return instrument_key_from_metadata(member)
 
 
 def _universe_matches(item: dict[str, Any], reference: str) -> bool:

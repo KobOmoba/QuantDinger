@@ -52,6 +52,7 @@ from app.services.strategy_v2 import (
     compile_strategy_v2,
 )
 from app.services.strategy_v2.live_execution import LiveOrderRequest, StrategyV2OrderGateway
+from app.services.strategy_v2.instruments import instrument_key_from_metadata, parse_instrument
 from app.utils.db import get_db_connection
 from app.utils.logger import get_logger
 from app.utils.numeric_precision import format_decimal
@@ -1661,13 +1662,15 @@ class TradingExecutor:
         direction_mode: str = "",
         strategy_equity: float | None = None,
     ) -> bool:
+        intent_key = parse_instrument(intent.symbol).key
         member = next(
-            (item for item in candidates if str(item.get("key") or "") == str(intent.symbol)),
+            (item for item in candidates if _member_key(item) == intent_key),
             None,
         )
         if not member:
             raise RuntimeError(f"strategyV2.instrumentNotFound:{intent.symbol}")
-        frame = frames.get(str(intent.symbol))
+        frame_aliases = (str(intent.symbol), str(member.get("key") or ""))
+        frame = _instrument_frame(frames, intent_key, *frame_aliases)
         price = float(current_price_override or 0)
         if price <= 0 and frame is not None and not frame.empty:
             price = float(frame["close"].iloc[-1])
@@ -1731,6 +1734,11 @@ class TradingExecutor:
             # the opposite entry.
             requests = requests[:1]
         submitted = False
+        resolved_market_frames: dict[str, pd.DataFrame] = {}
+        for frequency, bundle in (frequency_frames or {}).items():
+            frequency_frame = _instrument_frame(bundle, intent_key, *frame_aliases)
+            if frequency_frame is not None:
+                resolved_market_frames[frequency] = frequency_frame
         for action, quantity in requests:
             submitted = bool(self._execute_signal(
                 strategy_id=strategy_id,
@@ -1762,11 +1770,7 @@ class TradingExecutor:
                 price_exchange_id=str(member.get("exchange_id") or ""),
                 price_instrument_id=str(member.get("instrument_id") or ""),
                 market_frame=frame,
-                market_frames={
-                    frequency: bundle.get(str(intent.symbol))
-                    for frequency, bundle in (frequency_frames or {}).items()
-                    if bundle.get(str(intent.symbol)) is not None
-                },
+                market_frames=resolved_market_frames,
             )) or submitted
         return submitted
 
@@ -3194,16 +3198,18 @@ def _runtime_wait_seconds(
 
 
 def _member_key(member: dict[str, Any]) -> str:
-    market = str(member.get("market") or "")
-    symbol = str(member.get("symbol") or "")
-    exchange_id = str(member.get("exchange_id") or "")
-    market_type = str(member.get("market_type") or "")
-    suffix = f"@{exchange_id}" if exchange_id else ""
-    if suffix and market_type:
-        suffix += f":{market_type}"
-    elif market_type:
-        suffix = f"@{market_type}"
-    return f"{market}:{symbol}{suffix}"
+    return instrument_key_from_metadata(member)
+
+
+def _instrument_frame(
+    frames: Mapping[str, pd.DataFrame],
+    canonical_key: str,
+    *aliases: str,
+) -> pd.DataFrame | None:
+    for key in (canonical_key, *aliases):
+        if key and key in frames:
+            return frames[key]
+    return None
 
 
 def _apply_market_data_defaults(candidates: list[dict[str, Any]]) -> None:
@@ -3222,8 +3228,8 @@ def _apply_market_data_defaults(candidates: list[dict[str, Any]]) -> None:
                 member.get("market_type"),
                 market="Crypto",
             )
-            member["key"] = _member_key(member)
-        key = str(member.get("key") or _member_key(member))
+        member["key"] = _member_key(member)
+        key = str(member["key"])
         deduplicated[key] = member
     candidates[:] = list(deduplicated.values())
 

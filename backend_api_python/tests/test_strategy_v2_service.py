@@ -111,6 +111,21 @@ def test_portfolio_benchmark_inference_is_market_aware():
     assert mixed is None
 
 
+@pytest.mark.parametrize(
+    ("instrument", "expected"),
+    [
+        (InstrumentSpec(market="USStock", symbol="DXCM", exchange_id="NASDAQ", market_type="spot"), "USStock:DXCM"),
+        (InstrumentSpec(market="HKStock", symbol="00700.HK", exchange_id="HKEX", market_type="spot"), "HKStock:00700.HK"),
+        (InstrumentSpec(market="CNStock", symbol="600519.SH", exchange_id="SSE", market_type="spot"), "CNStock:600519.SH"),
+        (InstrumentSpec(market="Forex", symbol="EUR/USD", exchange_id="broker", market_type="spot"), "Forex:EUR/USD"),
+        (InstrumentSpec(market="Futures", symbol="ES", exchange_id="CME", market_type="future"), "Futures:ES"),
+        (InstrumentSpec(market="Crypto", symbol="BTC/USDT", exchange_id="okx", market_type="swap"), "Crypto:BTC/USDT@okx:swap"),
+    ],
+)
+def test_instrument_key_keeps_venue_only_for_exchange_routed_crypto(instrument, expected):
+    assert instrument.key == expected
+
+
 def test_explicit_portfolio_benchmark_is_never_overridden():
     explicit = InstrumentSpec(market="USStock", symbol="QQQ", market_type="spot")
     manifest = _portfolio_manifest(
