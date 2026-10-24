@@ -64,6 +64,7 @@
     <a href="https://codecov.io/gh/OpenByteInc/QuantDinger"><img src="https://codecov.io/gh/OpenByteInc/QuantDinger/branch/main/graph/badge.svg" alt="Codecov"></a>
     <a href="https://scorecard.dev/viewer/?uri=github.com/OpenByteInc/QuantDinger"><img src="https://api.scorecard.dev/projects/github.com/OpenByteInc/QuantDinger/badge" alt="OpenSSF Scorecard"></a>
     <a href="https://www.bestpractices.dev/projects/15860"><img src="https://www.bestpractices.dev/projects/15860/baseline" alt="OpenSSF Baseline"></a>
+    <a href="https://www.bestpractices.dev/projects/15860"><img src="https://www.bestpractices.dev/projects/15860/badge" alt="OpenSSF Best Practices"></a>
     <img src="docs/badges/python-3.12.svg" alt="Python 3.12">
     <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18">
     <img src="https://img.shields.io/badge/Redis-8-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis 8">
@@ -692,6 +693,18 @@ needed when building those clients from source. For deeper ownership rules, read
 [Process roles](docs/architecture/PROCESS_ROLES_AND_TASKS.md).
 
 ## Documentation
+
+Project engineering and assurance documents:
+
+- [Development environment](DEVELOPMENT.md)
+- [Testing policy](docs/getting-started/TESTING.md)
+- [Architecture](docs/architecture/ARCHITECTURE.md)
+- [Governance](GOVERNANCE.md) and [maintainers](MAINTAINERS.md)
+- [Security policy](SECURITY.md)
+- [Security assessment](docs/security/SECURITY_ASSESSMENT.md)
+- [Secure development practices](docs/security/SECURE_DEVELOPMENT.md)
+- [Dependency management policy](docs/security/DEPENDENCY_POLICY.md)
+- [Release history](CHANGELOG.md)
 
 The maintained documentation index is available at [`docs/README.md`](docs/README.md).
 

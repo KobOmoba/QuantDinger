@@ -29,7 +29,8 @@ concurrency:
   group: docker-publish-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -38,6 +39,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -82,6 +84,7 @@ jobs:
           echo "git_tag=${git_tag}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push backend
+        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: ./backend_api_python
@@ -98,6 +101,16 @@ jobs:
           cache-to: type=gha,mode=max,scope=backend
           provenance: mode=max
           sbom: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign backend image
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: >-
+          cosign sign --yes
+          "ghcr.io/${{ github.repository_owner }}/quantdinger-backend@${IMAGE_DIGEST}"
 
   release:
     name: Create GitHub Release
@@ -122,5 +135,14 @@ jobs:
             ```
 
             Pin in `docker-compose.ghcr.yml` via `IMAGE_TAG=${{ github.ref_name }}` in a project-root `.env`.
+
+            The image is signed with Sigstore keyless signing. Verify it with:
+
+            ```bash
+            cosign verify \
+              --certificate-identity-regexp '^https://github.com/OpenByteInc/QuantDinger/.github/workflows/docker-publish.yml@refs/tags/v.*$' \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              ghcr.io/openbyteinc/quantdinger-backend:${{ github.ref_name }}
+            ```
 
             ---

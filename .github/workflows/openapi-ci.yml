@@ -20,7 +20,8 @@ on:
       - '.spectral.yaml'
       - '.github/workflows/openapi-ci.yml'
 
-permissions: read-all
+permissions:
+  contents: read
 
 concurrency:
   group: openapi-ci-${{ github.ref }}

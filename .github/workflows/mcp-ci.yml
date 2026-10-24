@@ -18,7 +18,8 @@ on:
       - 'docs/agent/agent-openapi.json'
       - '.github/workflows/mcp-ci.yml'
 
-permissions: read-all
+permissions:
+  contents: read
 
 concurrency:
   group: mcp-ci-${{ github.ref }}

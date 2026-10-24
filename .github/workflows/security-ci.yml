@@ -12,7 +12,8 @@ concurrency:
   group: security-ci-${{ github.ref }}
   cancel-in-progress: true
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   python-security:
