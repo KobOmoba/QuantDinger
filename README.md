@@ -58,6 +58,7 @@
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="Apache 2.0"></a>
+    <a href="https://scorecard.dev/viewer/?uri=github.com/OpenByteInc/QuantDinger"><img src="https://api.scorecard.dev/projects/github.com/OpenByteInc/QuantDinger/badge" alt="OpenSSF Scorecard"></a>
     <img src="docs/badges/python-3.12.svg" alt="Python 3.12">
     <img src="https://img.shields.io/badge/PostgreSQL-18-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 18">
     <img src="https://img.shields.io/badge/Redis-8-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis 8">
