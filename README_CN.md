@@ -14,6 +14,26 @@
     ·
     <a href="README_CN.md"><strong>简体中文</strong></a>
     ·
+    <a href="README_TW.md"><strong>繁體中文</strong></a>
+    ·
+    <a href="README_JA.md"><strong>日本語</strong></a>
+    ·
+    <a href="README_KO.md"><strong>한국어</strong></a>
+    ·
+    <a href="README_DE.md"><strong>Deutsch</strong></a>
+    ·
+    <a href="README_FR.md"><strong>Français</strong></a>
+    ·
+    <a href="README_RU.md"><strong>Русский</strong></a>
+    ·
+    <a href="README_AR.md"><strong>العربية</strong></a>
+    ·
+    <a href="README_TH.md"><strong>ไทย</strong></a>
+    ·
+    <a href="README_VI.md"><strong>Tiếng Việt</strong></a>
+  </p>
+
+  <p>
     <a href="docs/api/README.md"><strong>API 文档</strong></a>
     ·
     <a href="docs/agent/README.md"><strong>AI Agent 与 MCP</strong></a>
