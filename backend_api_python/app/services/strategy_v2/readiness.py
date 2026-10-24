@@ -49,7 +49,7 @@ def validate_warmup(frequency_frames, warmup_bars, start_date, members=()):
         raise StrategyV2ContractError("strategyV2.insufficientWarmupData:" + details)
 
 
-def validate_fundamentals(frames, required, as_of=None):
+def fundamental_shortfalls(frames, required, as_of=None):
     problems = []
     for symbol, frame in frames.items():
         visible = frame
@@ -58,6 +58,15 @@ def validate_fundamentals(frames, required, as_of=None):
         for field in sorted(required):
             values = pd.to_numeric(visible[field], errors="coerce") if field in visible else pd.Series(dtype=float)
             if not values.replace([float("inf"), -float("inf")], float("nan")).notna().any():
-                problems.append(f"{symbol}/{field}")
+                problems.append({"symbol": symbol, "field": field})
+    return problems
+
+
+def validate_fundamentals(frames, required, as_of=None):
+    problems = fundamental_shortfalls(frames, required, as_of)
     if problems:
-        raise StrategyV2ContractError("strategyV2.fundamentalDataMissing:" + ";".join(problems[:6]))
+        details = ";".join(
+            f"{item['symbol']}/{item['field']}"
+            for item in problems[:6]
+        )
+        raise StrategyV2ContractError("strategyV2.fundamentalDataMissing:" + details)

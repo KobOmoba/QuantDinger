@@ -582,6 +582,70 @@ def on_rebalance(context, data):
     }]
 
 
+def test_dynamic_universe_excludes_members_without_required_fundamentals(tmp_path):
+    class DynamicUniverse:
+        @staticmethod
+        def list_universes(_user_id):
+            return [{"id": 7, "code": "sp500", "source_ref": "SP500"}]
+
+        @staticmethod
+        def candidate_members(_user_id, _universe_id, *, start, end):
+            del start, end
+            return [
+                {"market": "USStock", "symbol": "AAPL"},
+                {"market": "USStock", "symbol": "BE"},
+            ]
+
+        @staticmethod
+        def resolve_members(_user_id, _universe_id, *, as_of):
+            del as_of
+            return [
+                {"market": "USStock", "symbol": "AAPL"},
+                {"market": "USStock", "symbol": "BE"},
+            ]
+
+    def enrich(frames, _members):
+        return {
+            symbol: frame.assign(
+                market_cap=1_000_000_000.0 if symbol == "USStock:AAPL" else None
+            )
+            for symbol, frame in frames.items()
+        }
+
+    code = """
+def initialize(context):
+    context.set_universe(pool="sp500")
+    context.subscribe(frequency="1d")
+
+def on_rebalance(context, data):
+    members = list(get_universe_stocks())
+    get_fundamentals(["market_cap"], members)
+"""
+    service = StrategyV2BacktestService(
+        repository=_Repository(),
+        universe_service=DynamicUniverse(),
+        frame_fetcher=_frame,
+        fundamental_enricher=enrich,
+        snapshot_store=MarketDataSnapshotStore(tmp_path),
+    )
+
+    _, result = service.run(
+        user_id=1,
+        code=code,
+        start_date=datetime(2026, 1, 1),
+        end_date=datetime(2026, 1, 5, 23, 59),
+        initial_capital=10000,
+        persist=False,
+    )
+
+    assert result["diagnostics"]["symbolsUsed"] == 1
+    assert result["diagnostics"]["symbolsSkipped"] == [{
+        "symbol": "USStock:BE",
+        "reason": "strategyV2.fundamentalDataMissing",
+        "missingFields": ["market_cap"],
+    }]
+
+
 def test_v2_service_accepts_a_controlled_fundamental_enricher():
     code = """
 def initialize(context):

@@ -38,6 +38,7 @@ from .models import InstrumentSpec, StrategyManifest
 from .market_data import load_strategy_frame
 from .runtime import StrategyV2BacktestRunner
 from .readiness import (
+    fundamental_shortfalls,
     validate_fundamentals,
     validate_universe_history,
     validate_warmup,
@@ -390,7 +391,31 @@ class StrategyV2BacktestService:
             enricher = self.fundamental_enricher or get_fundamental_data_service().enrich_panel
             frames = enricher(frames, candidates)
             frequency_frames[frequency] = frames
-            self.validate_fundamental_dependencies(frames, manifest)
+            if manifest.universe.kind == "dynamic":
+                required = {
+                    _normalize_field(item)
+                    for item in manifest.fundamental_dependencies
+                }
+                fundamental_gaps = fundamental_shortfalls(frames, required)
+                if fundamental_gaps:
+                    excluded_fields: dict[str, set[str]] = {}
+                    for item in fundamental_gaps:
+                        excluded_fields.setdefault(item["symbol"], set()).add(item["field"])
+                    excluded_symbols = set(excluded_fields)
+                    remaining_symbols = set(frames) - excluded_symbols
+                    if not remaining_symbols:
+                        validate_fundamentals(frames, required)
+                    for item_frames in frequency_frames.values():
+                        for symbol in excluded_symbols:
+                            item_frames.pop(symbol, None)
+                    skipped.extend({
+                        "symbol": symbol,
+                        "reason": "strategyV2.fundamentalDataMissing",
+                        "missingFields": sorted(excluded_fields[symbol]),
+                    } for symbol in sorted(excluded_symbols))
+                    frames = frequency_frames.get(frequency, {})
+            else:
+                self.validate_fundamental_dependencies(frames, manifest)
 
         emit(
             "preparing_simulation",
