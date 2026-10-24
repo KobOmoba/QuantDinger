@@ -58,6 +58,7 @@
 
   <p>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square" alt="Apache 2.0"></a>
+    <a href="https://codecov.io/gh/OpenByteInc/QuantDinger"><img src="https://codecov.io/gh/OpenByteInc/QuantDinger/branch/main/graph/badge.svg" alt="Codecov"></a>
     <a href="https://scorecard.dev/viewer/?uri=github.com/OpenByteInc/QuantDinger"><img src="https://api.scorecard.dev/projects/github.com/OpenByteInc/QuantDinger/badge" alt="OpenSSF Scorecard"></a>
     <a href="https://www.bestpractices.dev/projects/15860"><img src="https://www.bestpractices.dev/projects/15860/baseline" alt="OpenSSF Baseline"></a>
     <img src="docs/badges/python-3.12.svg" alt="Python 3.12">
