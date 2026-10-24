@@ -723,6 +723,22 @@ def test_calculate_drawdown_recovery_unrecovered_at_end():
     assert result["recoveryFactor"] == pytest.approx(-5.0 / 22.0)
 
 
+def test_calculate_drawdown_recovery_closes_episode_at_exact_peak():
+    curve = [
+        {"time": "2026-01-01", "value": 100.0},
+        {"time": "2026-01-02", "value": 80.0},
+        {"time": "2026-01-03", "value": 100.0},
+        {"time": "2026-01-04", "value": 90.0},
+    ]
+
+    result = calculate_drawdown_recovery(curve, initial_capital=100.0)
+
+    assert result["maxDrawdownRecovered"] is True
+    assert result["maxDrawdownRecoveryTime"] == "2026-01-03"
+    assert result["maxDrawdownRecoveryDays"] == pytest.approx(2.0)
+    assert result["maxDrawdownDurationDays"] == pytest.approx(2.0)
+
+
 def test_calculate_drawdown_recovery_strictly_increasing_and_empty():
     curve = [
         {"time": "2026-01-01", "value": 100.0},

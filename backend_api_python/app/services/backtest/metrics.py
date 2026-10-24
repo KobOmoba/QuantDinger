@@ -782,7 +782,7 @@ def calculate_drawdown_recovery(
     current_episode: dict[str, Any] | None = None
 
     for t, v, _ in points:
-        if peak <= 0 or v > peak:
+        if peak <= 0 or v >= peak:
             if current_episode is not None:
                 current_episode["recovery_time"] = t
                 current_episode["duration_days"] = max(
