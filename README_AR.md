@@ -1,6 +1,9 @@
 <div align="center" dir="rtl">
   <a href="https://github.com/OpenByteInc/QuantDinger">
-    <img src="docs/screenshots/logo.png" alt="شعار QuantDinger" width="420">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/logo-dark.png">
+      <img src="docs/screenshots/logo.png" alt="شعار QuantDinger" width="420">
+    </picture>
   </a>
 
   <h1>QuantDinger</h1>
