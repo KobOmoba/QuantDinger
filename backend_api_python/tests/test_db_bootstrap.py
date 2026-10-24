@@ -118,6 +118,34 @@ def test_apply_init_sql_commits_on_success(tmp_path, monkeypatch):
     assert conn.committed, "_apply_init_sql must commit on success"
 
 
+def test_apply_init_sql_includes_public_universe_expansion(tmp_path, monkeypatch):
+    fake_sql = tmp_path / 'init.sql'
+    fake_sql.write_text("SELECT 1;", encoding='utf-8')
+    monkeypatch.setattr(db_module, '_resolve_init_sql_path', lambda: fake_sql)
+    applied = []
+
+    def fake_apply_component(_conn, _logger, **kwargs):
+        applied.append(kwargs['name'])
+        return 'applied'
+
+    monkeypatch.setattr(db_module, '_apply_migration_component', fake_apply_component)
+    conn = _FakeConn(deny_tables=())
+    with patch.object(db_module, 'get_db_connection', return_value=_FakeConnCtx(conn)):
+        db_module._apply_init_sql(logging.getLogger('test'))
+
+    assert 'public-universe-expansion-20261024' in applied
+
+
+def test_public_universe_expansion_has_explicit_returning_clause():
+    migration_path = (
+        Path(__file__).resolve().parents[1]
+        / 'migrations'
+        / '20261024_public_universe_expansion.sql'
+    )
+
+    assert 'RETURNING code' in migration_path.read_text(encoding='utf-8')
+
+
 class _MigrationCursor:
     def __init__(self, rows=()):
         self.rows = list(rows)

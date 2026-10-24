@@ -51,6 +51,21 @@ from .storage import StrategyBacktestRepository, compact_backtest_result
 logger = get_logger(__name__)
 
 
+def strategy_universe_symbol_limit(frequency: str) -> int:
+    standard_limit = max(
+        1,
+        int(os.getenv("STRATEGY_V2_MAX_SYMBOLS", "600") or 600),
+    )
+    normalized_frequency = normalize_frequency(frequency)
+    if normalized_frequency not in {"1d", "1w"}:
+        return standard_limit
+    daily_limit = max(
+        1,
+        int(os.getenv("STRATEGY_V2_MAX_DAILY_SYMBOLS", "1200") or 1200),
+    )
+    return max(standard_limit, daily_limit)
+
+
 class StrategyV2BacktestService:
     def __init__(
         self,
@@ -189,7 +204,7 @@ class StrategyV2BacktestService:
             start=start_date.date(),
             end=end_date.date(),
         )
-        limit = max(1, int(os.getenv("STRATEGY_V2_MAX_SYMBOLS", "600") or 600))
+        limit = strategy_universe_symbol_limit(normalized_frequency)
         if len(candidates) > limit:
             raise StrategyV2ContractError("strategyV2.universeTooLarge")
         candidates = [{**item, "key": _member_key(item)} for item in candidates]
@@ -683,7 +698,7 @@ class StrategyV2BacktestService:
             start=start_date.date(),
             end=end_date.date(),
         )
-        limit = max(1, int(os.getenv("STRATEGY_V2_MAX_SYMBOLS", "600") or 600))
+        limit = strategy_universe_symbol_limit(manifest.driving_frequency)
         if len(members) > limit:
             raise StrategyV2ContractError("strategyV2.universeTooLarge")
         return [{**item, "key": _member_key(item)} for item in members], universe_id

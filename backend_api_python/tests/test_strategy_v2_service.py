@@ -19,6 +19,7 @@ from app.services.strategy_v2.service import (
     _review_frequency_for_window,
     _universe_matches,
     _warmup_calendar_days,
+    strategy_universe_symbol_limit,
 )
 from app.services.strategy_v2.snapshot import MarketDataSnapshotStore
 
@@ -34,6 +35,23 @@ def test_warmup_days_follow_strategy_frequency():
     assert _warmup_calendar_days("4h", 120) == 30
     assert _warmup_calendar_days("1d", 10) == 19
     assert _warmup_calendar_days("1w", 10) == 80
+
+
+def test_universe_symbol_limit_is_larger_for_daily_data(monkeypatch):
+    monkeypatch.delenv("STRATEGY_V2_MAX_SYMBOLS", raising=False)
+    monkeypatch.delenv("STRATEGY_V2_MAX_DAILY_SYMBOLS", raising=False)
+
+    assert strategy_universe_symbol_limit("30m") == 600
+    assert strategy_universe_symbol_limit("1d") == 1200
+    assert strategy_universe_symbol_limit("1w") == 1200
+
+
+def test_universe_symbol_limit_honors_capacity_overrides(monkeypatch):
+    monkeypatch.setenv("STRATEGY_V2_MAX_SYMBOLS", "700")
+    monkeypatch.setenv("STRATEGY_V2_MAX_DAILY_SYMBOLS", "1000")
+
+    assert strategy_universe_symbol_limit("1h") == 700
+    assert strategy_universe_symbol_limit("1d") == 1000
 
 
 def test_instrument_rules_use_last_common_market_timestamp():

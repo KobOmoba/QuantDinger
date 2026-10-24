@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import uuid
 from datetime import date, datetime, timezone
@@ -17,7 +18,7 @@ from app.utils.db import get_db_connection
 
 STATIC_START = date(1900, 1, 1)
 SUPPORTED_UNIVERSE_TYPES = frozenset({
-    "manual", "watchlist", "index", "etf", "market_cap", "market",
+    "manual", "watchlist", "index", "etf", "market_cap", "market", "industry",
 })
 EDITABLE_UNIVERSE_TYPES = frozenset({"manual"})
 MAX_MANUAL_MEMBERS = 5000
@@ -237,6 +238,29 @@ class UniverseService:
         })
 
     def system_overview(self) -> dict:
+        history_syncable_codes = [
+            "sp500",
+            "nasdaq100",
+            "us_sector_information_technology",
+            "us_sector_health_care",
+            "us_sector_financials",
+            "us_sector_consumer_discretionary",
+            "us_sector_communication_services",
+            "us_sector_industrials",
+            "us_sector_consumer_staples",
+            "us_sector_energy",
+            "us_sector_utilities",
+            "us_sector_real_estate",
+            "us_sector_materials",
+        ]
+        standard_symbol_limit = max(
+            1,
+            int(os.getenv("STRATEGY_V2_MAX_SYMBOLS", "600") or 600),
+        )
+        daily_symbol_limit = max(
+            standard_symbol_limit,
+            int(os.getenv("STRATEGY_V2_MAX_DAILY_SYMBOLS", "1200") or 1200),
+        )
         with get_db_connection() as db:
             cur = db.cursor()
             cur.execute(
@@ -266,13 +290,29 @@ class UniverseService:
                 item["member_count"] = len(self._symbol_master_members(item.get("source_ref") or ""))
             item["history_from"] = _iso(row.get("history_from"))
             item["source_version"] = str(row.get("source_version") or "")
+            item["history_sync_supported"] = item.get("code") in history_syncable_codes
+            member_count = int(item.get("member_count") or 0)
+            item["standard_frequency_eligible"] = member_count <= standard_symbol_limit
+            item["daily_frequency_eligible"] = member_count <= daily_symbol_limit
             items.append(item)
         return {
             "universes": items,
+            "history_syncable_codes": history_syncable_codes,
+            "execution_limits": {
+                "standard": standard_symbol_limit,
+                "daily": daily_symbol_limit,
+            },
             "syncable_codes": [
-                "csi300", "csi500", "sp500", "nasdaq100", "crypto_top100",
+                "sse50", "csi300", "csi500", "csi800", "csi1000",
+                "sp500", "nasdaq100", "dow30", "sp400", "sp600", "russell1000",
+                "us_sector_information_technology", "us_sector_health_care",
+                "us_sector_financials", "us_sector_consumer_discretionary",
+                "us_sector_communication_services", "us_sector_industrials",
+                "us_sector_consumer_staples", "us_sector_energy",
+                "us_sector_utilities", "us_sector_real_estate", "us_sector_materials",
+                "crypto_top100",
                 "hk_etf", "us_etf",
-                "hk_hsi_core50", "hk_tech30", "hk_china_enterprises50", "hk_high_dividend50",
+                "hk_hsi", "hk_tech30", "hk_china_enterprises50", "hk_stock_connect",
             ],
         }
 
