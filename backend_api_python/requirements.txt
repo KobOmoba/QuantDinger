@@ -11,6 +11,10 @@ pandas>=3.0.6
 # Strategy API V2 technical indicator runtime. Wheels bundle the C library.
 TA-Lib==0.8.1
 exchange-calendars>=4.13.2,<5
+# LiteLLM currently declares filelock<4.0, but the 4.2.1 runtime is compatible
+# and resolves CVE-2026-112940, CVE-2026-112913, and CVE-2026-112907.
+# Production installs the complete verified lock with --no-deps.
+filelock>=4.2.1,<5
 requests>=2.34.2
 # CVE-2026-97687 and related redirect/decompression advisories; 2.8.0+
 urllib3>=2.8.0,<3
@@ -51,8 +55,8 @@ flask-smorest>=0.47.0,<0.48
 marshmallow>=4.3.1,<5
 PyYAML>=6.0.3
 # Server-side PDF export for AI analysis reports
-# PDF parser security advisories through CVE-2026-113786; 6.21.1+
-pypdf>=6.21.1,<7
+# PDF parser security advisories through CVE-2026-115580; 6.21.2+
+pypdf>=6.21.2,<7
 reportlab>=5.0.1
 # Password hashing
 bcrypt>=5.0.0

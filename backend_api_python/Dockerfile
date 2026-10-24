@@ -58,11 +58,12 @@ RUN set -eux; \
           "pip>=26.1.2,<27"; \
       pip install --no-cache-dir --prefer-binary --timeout 180 \
           -i https://mirrors.aliyun.com/pypi/simple/ \
+          --no-deps \
           -r requirements.lock \
-        || pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.lock; \
+        || pip install --no-cache-dir --prefer-binary --timeout 180 --no-deps -r requirements.lock; \
     else \
       python -m pip install --no-cache-dir --timeout 180 --retries 5 --upgrade "pip>=26.1.2,<27"; \
-      pip install --no-cache-dir --prefer-binary --timeout 180 -r requirements.lock; \
+      pip install --no-cache-dir --prefer-binary --timeout 180 --no-deps -r requirements.lock; \
     fi; \
     apt-get purge -y --auto-remove build-essential python3-dev libffi-dev libssl-dev; \
     rm -rf /var/lib/apt/lists/*

@@ -37,7 +37,7 @@ jobs:
 
       - name: Audit locked dependencies
         working-directory: ./backend_api_python
-        run: pip-audit -r requirements.lock --progress-spinner off
+        run: pip-audit -r requirements.lock --no-deps --disable-pip --progress-spinner off
 
       - name: Scan high-severity source findings
         working-directory: ./backend_api_python

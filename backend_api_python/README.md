@@ -125,7 +125,8 @@ Create an environment and install development dependencies:
 ```bash
 python -m venv .venv
 python -m pip install --upgrade pip
-python -m pip install -r requirements.lock -r requirements-dev.txt
+python -m pip install --no-deps -r requirements.lock
+python -m pip install -r requirements-dev.txt
 ```
 
 Apply migrations:
