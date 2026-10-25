@@ -313,14 +313,17 @@ legacy-image recovery and rootless/NFS notes.
 ```bash
 git clone https://github.com/OpenByteInc/QuantDinger.git
 cd QuantDinger
-cp .env.example .env
+python scripts/bootstrap_env.py
 ```
 
-Before the first start, replace the example values in the unified environment file:
+Before the first start, review the unified environment file. The bootstrap command
+already generates the PostgreSQL, session-signing, and credential-encryption
+secrets; set the administrator credentials and review any production-only
+integrations:
 
 | File | Required production values |
 | --- | --- |
-| `.env` | `SECRET_KEY`, `CREDENTIAL_ENCRYPTION_KEY`, administrator, PostgreSQL, Redis, and Grafana credentials |
+| `.env` | Administrator credentials; optional Redis and Grafana credentials; deployment-specific URLs and integrations |
 
 After an update, `docker compose up` runs the one-shot `env-sync` service before
 database and Kafka initialization. It appends newly introduced settings, imports
@@ -336,7 +339,9 @@ For a manual one-time migration from older releases, add
 `--legacy backend_api_python/.env` (source deployment) or `--legacy backend.env`
 (old GHCR deployment). The old file is not deleted.
 
-Generate independent secrets with:
+The bootstrap command creates `.env`, preserves existing values during upgrades,
+and generates independent PostgreSQL, session, and credential-encryption secrets.
+To generate another independent secret manually:
 
 ```bash
 python -c "import secrets; print(secrets.token_hex(32))"
