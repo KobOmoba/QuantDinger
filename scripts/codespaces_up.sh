@@ -32,6 +32,14 @@ if [ ! -f "$GENERATED" ]; then
   credential_key=$(rand_hex 32)
   admin_password=$(rand_hex 8)
 
+  # The backend asks Docker for 65535 open files; some hosts cap the hard limit
+  # lower, and then the container fails with "error setting rlimits".
+  nofile=65535
+  host_nofile=$(ulimit -Hn)
+  if [ "$host_nofile" != "unlimited" ] && [ "$host_nofile" -lt "$nofile" ]; then
+    nofile=$host_nofile
+  fi
+
   if [ -n "${CODESPACE_NAME:-}" ] && [ -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]; then
     base="https://${CODESPACE_NAME}"
     domain="${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
@@ -71,7 +79,11 @@ services:
       POSTGRES_PASSWORD: "${pg_password}"
   kafka-init: {environment: *qd-env, volumes: *qd-volumes}
   migration: {environment: *qd-env, volumes: *qd-volumes}
-  backend: {environment: *qd-env, volumes: *qd-volumes}
+  backend:
+    environment: *qd-env
+    volumes: *qd-volumes
+    ulimits:
+      nofile: {soft: ${nofile}, hard: ${nofile}}
   trading-worker: {environment: *qd-env, volumes: *qd-volumes}
   kafka-audit-worker: {environment: *qd-env, volumes: *qd-volumes}
   strategy-dispatcher-worker: {environment: *qd-env, volumes: *qd-volumes}
@@ -94,6 +106,9 @@ export POSTGRES_PASSWORD; POSTGRES_PASSWORD=$(read_value POSTGRES_PASSWORD)
 export FRONTEND_HOST; FRONTEND_HOST=$(read_value FRONTEND_HOST)
 export MOBILE_HOST; MOBILE_HOST=$(read_value MOBILE_HOST)
 export FRONTEND_URL; FRONTEND_URL=$(read_value FRONTEND_URL)
+# The base file defaults to a mainland-China Docker Hub mirror for the backend
+# build; Codespaces runners reach the official image directly.
+export PYTHON_BASE_IMAGE="${PYTHON_BASE_IMAGE:-python:3.12-slim-bookworm}"
 
 files=(-f docker-compose.yml -f "$GENERATED")
 # Keep the optional local override (for example the Groq key pass-through).
