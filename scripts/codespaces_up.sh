@@ -72,8 +72,6 @@ x-qd-volumes: &qd-volumes
   - /dev/null:/app/.env
 
 services:
-  env-sync:
-    entrypoint: ["python", "-c", "print('env-sync skipped: Codespaces setup does not use .env')"]
   postgres:
     environment:
       POSTGRES_PASSWORD: "${pg_password}"
