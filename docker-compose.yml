@@ -51,7 +51,7 @@ x-worker-environment: &worker-environment
   TZ: ${TZ:-Asia/Shanghai}
   LOG_FORMAT: ${LOG_FORMAT:-json}
   SECRET_KEY: ${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
-  DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
+  DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@db:5432/${POSTGRES_DB:-quantdinger}
   DB_TYPE: postgresql
   REDIS_HOST: redis
   REDIS_PORT: 6379
@@ -86,7 +86,7 @@ services:
   # ========================
   # PostgreSQL Database
   # ========================
-  postgres:
+  db:
     image: ${POSTGRES_IMAGE:-${IMAGE_PREFIX:-}postgres:18.3-alpine}
     container_name: quantdinger-db
     restart: unless-stopped
@@ -110,7 +110,9 @@ services:
     ports:
       - "${DB_PORT:-127.0.0.1:5432}:5432"
     networks:
-      - quantdinger-network
+      quantdinger-network:
+        aliases:
+          - postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-quantdinger} -d ${POSTGRES_DB:-quantdinger}"]
       interval: 10s
@@ -229,14 +231,14 @@ services:
     restart: "no"
     command: ["python", "-m", "app.commands.migrate"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
     environment:
       SECRET_KEY: ${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@db:5432/${POSTGRES_DB:-quantdinger}
       DB_TYPE: postgresql
       DB_POOL_MIN: 1
       DB_POOL_MAX: 2
@@ -258,7 +260,7 @@ services:
         soft: 65535
         hard: 65535
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -278,7 +280,7 @@ services:
       - INDICATOR_PREVIEW_DIR=${INDICATOR_PREVIEW_DIR:-/app/data/indicator_previews}
       - GIT_TAG=${GIT_TAG:-${IMAGE_TAG:-}}
       - TZ=${TZ:-Asia/Shanghai}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@db:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -373,7 +375,7 @@ services:
       replicas: ${TRADING_WORKER_REPLICAS:-1}
     command: ["python", "-m", "app.commands.trading_worker"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -407,7 +409,7 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.commands.kafka_audit_worker"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
@@ -440,7 +442,7 @@ services:
       replicas: ${STRATEGY_DISPATCHER_REPLICAS:-1}
     command: ["python", "-m", "app.commands.strategy_dispatcher_worker"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
@@ -474,7 +476,7 @@ services:
       replicas: ${STRATEGY_EVALUATOR_REPLICAS:-1}
     command: ["python", "-m", "app.commands.strategy_evaluator_worker"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       migration:
         condition: service_completed_successfully
@@ -507,7 +509,7 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.commands.scheduler"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -537,7 +539,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.celery_app:celery_app", "worker", "--loglevel=INFO", "-Q", "jobs,ai,maintenance", "--concurrency=${CELERY_CONCURRENCY:-2}"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -569,7 +571,7 @@ services:
     restart: unless-stopped
     command: ["celery", "-A", "app.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/app/data/celerybeat-schedule"]
     depends_on:
-      postgres:
+      db:
         condition: service_healthy
       redis-jobs:
         condition: service_healthy
