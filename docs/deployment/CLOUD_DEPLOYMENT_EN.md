@@ -620,6 +620,30 @@ PROXY_URL=socks5h://host.docker.internal:10808
 
 On Linux, you may need to expose your proxy on a private interface or configure Docker host gateway support.
 
+### Web UI is unreachable from another machine
+
+By default `FRONTEND_HOST` and `MOBILE_HOST` are `127.0.0.1`, so
+`http://<server-ip>:8888` refuses connections from any other device. The
+recommended setup is the Nginx reverse proxy above. For direct access on a
+trusted LAN or VPN, set these in `.env`:
+
+```ini
+FRONTEND_HOST=0.0.0.0
+MOBILE_HOST=0.0.0.0
+FRONTEND_URL=http://<server-ip>:8888,http://<server-ip>:8889
+```
+
+Then recreate the frontends:
+
+```bash
+docker compose up -d frontend mobile
+```
+
+Open `8888`/`8889` in the host firewall or cloud security group for trusted
+sources only. Leave `BACKEND_PORT`, `DB_PORT`, and `REDIS_BIND` on
+`127.0.0.1`; the frontends reach the API through `backend:5000` on the
+Docker network.
+
 ### Public ports
 
 Do not expose these publicly:
