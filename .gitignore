@@ -107,3 +107,4 @@ backend_api_python/data/memory/
 # ========================
 docker-compose.override.yml
 run_stack.sh
+docker-compose.codespaces.yml
