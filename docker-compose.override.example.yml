@@ -1,0 +1,19 @@
+# Copy to docker-compose.override.yml (git-ignored); Compose loads it automatically.
+# Passes CUSTOM_API_KEY from the host shell into every service that may call the
+# LLM, so the key never has to be written to .env.
+x-llm-key: &llm-key
+  CUSTOM_API_KEY: ${CUSTOM_API_KEY:-}
+
+services:
+  backend:
+    environment: *llm-key
+  trading-worker:
+    environment: *llm-key
+  strategy-dispatcher-worker:
+    environment: *llm-key
+  strategy-evaluator-worker:
+    environment: *llm-key
+  scheduler-worker:
+    environment: *llm-key
+  celery-worker:
+    environment: *llm-key
