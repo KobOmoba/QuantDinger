@@ -50,7 +50,8 @@ x-backend-runtime: &backend-runtime
 x-worker-environment: &worker-environment
   TZ: ${TZ:-Asia/Shanghai}
   LOG_FORMAT: ${LOG_FORMAT:-json}
-  DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+  SECRET_KEY: ${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
+  DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
   DB_TYPE: postgresql
   REDIS_HOST: redis
   REDIS_PORT: 6379
@@ -82,17 +83,6 @@ x-worker-environment: &worker-environment
   LIVE_TRADING_WS_ORDER_MAX_CONNECTIONS: ${LIVE_TRADING_WS_ORDER_MAX_CONNECTIONS:-64}
 
 services:
-  env-sync:
-    build: *backend-build
-    image: ${BACKEND_LOCAL_IMAGE:-quantdinger-backend:local}
-    container_name: quantdinger-env-sync
-    restart: "no"
-    entrypoint: ["python", "-m", "app.commands.sync_env", "--workspace", "/workspace"]
-    volumes:
-      - ./:/workspace
-    networks:
-      - quantdinger-network
-
   # ========================
   # PostgreSQL Database
   # ========================
@@ -103,7 +93,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-quantdinger}
       POSTGRES_USER: ${POSTGRES_USER:-quantdinger}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quantdinger}
       PGDATA: ${POSTGRES_PGDATA:-/var/lib/postgresql/18/docker}
       TZ: ${TZ:-Asia/Shanghai}
     # Raise PostgreSQL's max_connections so API and worker pools plus
@@ -218,13 +208,10 @@ services:
     restart: "no"
     command: ["python", "-m", "app.commands.kafka_topics"]
     depends_on:
-      env-sync:
-        condition: service_completed_successfully
       kafka:
         condition: service_healthy
-    volumes:
-      - ./.env:/app/.env
     environment:
+      SECRET_KEY: ${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-1}
       KAFKA_MARKET_PARTITIONS: ${KAFKA_MARKET_PARTITIONS:-6}
@@ -247,9 +234,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      SECRET_KEY: ${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       DB_TYPE: postgresql
       DB_POOL_MIN: 1
       DB_POOL_MAX: 2
@@ -284,15 +271,14 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      # Mount .env for runtime config and admin-panel updates
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - PYTHON_API_HOST=0.0.0.0
       - PYTHON_API_PORT=5000
       - INDICATOR_PREVIEW_DIR=${INDICATOR_PREVIEW_DIR:-/app/data/indicator_previews}
       - GIT_TAG=${GIT_TAG:-${IMAGE_TAG:-}}
       - TZ=${TZ:-Asia/Shanghai}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -396,7 +382,6 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: trading
@@ -422,8 +407,6 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.commands.kafka_audit_worker"]
     depends_on:
-      env-sync:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migration:
@@ -432,7 +415,6 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_logs:/app/logs
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: kafka-audit
@@ -466,7 +448,6 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_logs:/app/logs
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: strategy-dispatcher
@@ -501,7 +482,6 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_logs:/app/logs
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: strategy-evaluator
@@ -536,7 +516,6 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: scheduler
@@ -569,7 +548,6 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: celery
@@ -600,7 +578,6 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
       <<: *worker-environment
       QD_PROCESS_ROLE: celery
@@ -633,7 +610,7 @@ services:
     container_name: quantdinger-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8888}:80"
+      - "${FRONTEND_HOST:-0.0.0.0}:${FRONTEND_PORT:-8888}:80"
     environment:
       # nginx envsubst will inject this into the proxy_pass directive at start.
       # Override with the backend's reachable URL when deploying outside compose
@@ -661,7 +638,7 @@ services:
     container_name: quantdinger-mobile
     restart: unless-stopped
     ports:
-      - "${MOBILE_HOST:-127.0.0.1}:${MOBILE_PORT:-8889}:80"
+      - "${MOBILE_HOST:-0.0.0.0}:${MOBILE_PORT:-8889}:80"
     environment:
       - BACKEND_URL=${BACKEND_URL:-http://backend:5000}
     depends_on:

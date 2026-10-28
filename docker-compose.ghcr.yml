@@ -46,17 +46,6 @@ x-backend-runtime: &backend-runtime
       max-file: ${CONTAINER_LOG_MAX_FILES:-5}
 
 services:
-  env-sync:
-    image: ${BACKEND_IMAGE:-ghcr.io/openbyteinc/quantdinger-backend}:${BACKEND_TAG:-${IMAGE_TAG:-latest}}
-    pull_policy: always
-    container_name: quantdinger-env-sync
-    restart: "no"
-    entrypoint: ["python", "-m", "app.commands.sync_env", "--workspace", "/workspace"]
-    volumes:
-      - ./:/workspace
-    networks:
-      - quantdinger-network
-
   postgres:
     image: ${POSTGRES_IMAGE:-${IMAGE_PREFIX:-}postgres:18.3-alpine}
     container_name: quantdinger-db
@@ -64,7 +53,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-quantdinger}
       POSTGRES_USER: ${POSTGRES_USER:-quantdinger}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quantdinger}
       PGDATA: ${POSTGRES_PGDATA:-/var/lib/postgresql/18/docker}
       TZ: ${TZ:-Asia/Shanghai}
     command:
@@ -169,13 +158,10 @@ services:
     restart: "no"
     command: ["python", "-m", "app.commands.kafka_topics"]
     depends_on:
-      env-sync:
-        condition: service_completed_successfully
       kafka:
         condition: service_healthy
-    volumes:
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
       - KAFKA_REPLICATION_FACTOR=${KAFKA_REPLICATION_FACTOR:-1}
       - KAFKA_MARKET_PARTITIONS=${KAFKA_MARKET_PARTITIONS:-48}
@@ -198,9 +184,9 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - DB_POOL_MIN=1
       - DB_POOL_MAX=2
@@ -233,19 +219,14 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      # Backend runtime config. Must exist as a *file* on the host - if missing,
-      # docker silently creates a directory at the mount target and shadows
-      # /app/.env. The entrypoint will auto-generate SECRET_KEY on first start
-      # and write it back through the bind mount, so the host file gets the
-      # generated key persistently.
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - PYTHON_API_HOST=0.0.0.0
       - PYTHON_API_PORT=5000
       - INDICATOR_PREVIEW_DIR=${INDICATOR_PREVIEW_DIR:-/app/data/indicator_previews}
       - GIT_TAG=${GIT_TAG:-${BACKEND_TAG:-${IMAGE_TAG:-}}}
       - TZ=${TZ:-Asia/Shanghai}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -304,12 +285,12 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=trading
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - STRATEGY_COMMANDS_ENABLED=false
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -339,8 +320,6 @@ services:
     restart: unless-stopped
     command: ["python", "-m", "app.commands.kafka_audit_worker"]
     depends_on:
-      env-sync:
-        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       migration:
@@ -349,11 +328,11 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_logs:/app/logs
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=kafka-audit
       - LOG_FORMAT=${LOG_FORMAT:-json}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - DB_POOL_MIN=1
       - DB_POOL_MAX=3
@@ -387,11 +366,11 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_logs:/app/logs
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=strategy-dispatcher
       - LOG_FORMAT=${LOG_FORMAT:-json}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - DB_POOL_MIN=1
       - DB_POOL_MAX=4
@@ -426,11 +405,11 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_logs:/app/logs
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=strategy-evaluator
       - LOG_FORMAT=${LOG_FORMAT:-json}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - DB_TYPE=postgresql
       - DB_POOL_MIN=1
       - DB_POOL_MAX=4
@@ -465,11 +444,11 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=scheduler
       - LOG_FORMAT=${LOG_FORMAT:-json}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -505,8 +484,8 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=celery
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - CELERY_TASKS_ENABLED=true
@@ -517,7 +496,7 @@ services:
       - CELERY_RESULT_DB=1
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_POOL_MIN=${WORKER_DB_POOL_MIN:-2}
@@ -550,8 +529,8 @@ services:
     volumes:
       - backend_logs:/app/logs
       - backend_data:/app/data
-      - ./.env:/app/.env
     environment:
+      - SECRET_KEY=${SECRET_KEY:-quantdinger-secret-key-32-bytes-minimum-length-default}
       - QD_PROCESS_ROLE=celery
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - CELERY_REDIS_HOST=redis-jobs
@@ -561,7 +540,7 @@ services:
       - CELERY_RESULT_DB=1
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-}
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required; run the QuantDinger installer or scripts/bootstrap_env.py before docker compose}@postgres:5432/${POSTGRES_DB:-quantdinger}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-quantdinger}:${POSTGRES_PASSWORD:-quantdinger}@postgres:5432/${POSTGRES_DB:-quantdinger}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - DB_POOL_MIN=${WORKER_DB_POOL_MIN:-2}
@@ -583,7 +562,7 @@ services:
     container_name: quantdinger-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_HOST:-127.0.0.1}:${FRONTEND_PORT:-8888}:80"
+      - "${FRONTEND_HOST:-0.0.0.0}:${FRONTEND_PORT:-8888}:80"
     environment:
       - BACKEND_URL=${BACKEND_URL:-http://backend:5000}
     depends_on:
@@ -603,7 +582,7 @@ services:
     container_name: quantdinger-mobile
     restart: unless-stopped
     ports:
-      - "${MOBILE_HOST:-127.0.0.1}:${MOBILE_PORT:-8889}:80"
+      - "${MOBILE_HOST:-0.0.0.0}:${MOBILE_PORT:-8889}:80"
     environment:
       - BACKEND_URL=${BACKEND_URL:-http://backend:5000}
     depends_on:
