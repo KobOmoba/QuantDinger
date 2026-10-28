@@ -601,6 +601,27 @@ PROXY_URL=socks5h://host.docker.internal:10808
 
 Linux 服务器上可能需要把代理监听到内网地址，或配置 Docker host gateway。
 
+### 其他设备无法访问 Web 界面
+
+`FRONTEND_HOST` 和 `MOBILE_HOST` 默认是 `127.0.0.1`，因此其他设备访问
+`http://<服务器IP>:8888` 会被拒绝。推荐使用上文的 Nginx 反向代理。如需在可信的局域网或
+VPN 内直接访问，在 `.env` 中设置：
+
+```ini
+FRONTEND_HOST=0.0.0.0
+MOBILE_HOST=0.0.0.0
+FRONTEND_URL=http://<服务器IP>:8888,http://<服务器IP>:8889
+```
+
+然后重建前端容器：
+
+```bash
+docker compose up -d frontend mobile
+```
+
+只在主机防火墙或云安全组中对可信来源开放 `8888`/`8889`。`BACKEND_PORT`、`DB_PORT`
+和 `REDIS_BIND` 保持 `127.0.0.1`；前端通过 Docker 网络内的 `backend:5000` 访问 API。
+
 ### 公网端口
 
 不要公开这些端口：
